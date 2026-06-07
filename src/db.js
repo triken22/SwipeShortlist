@@ -12,6 +12,11 @@ export const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA foreign_keys = ON");
 db.exec("PRAGMA journal_mode = WAL");
 
+const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
+const DEFAULT_TITLE = "Private shortlist";
+const DEFAULT_DEADLINE_LABEL = "Aim to decide today";
+const MAX_LINKS = 50;
+
 export function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS shortlists (
@@ -39,6 +44,7 @@ export function migrate() {
     CREATE TABLE IF NOT EXISTS voters (
       id INTEGER PRIMARY KEY,
       shortlist_id INTEGER NOT NULL REFERENCES shortlists(id) ON DELETE CASCADE,
+      voter_key TEXT,
       name TEXT NOT NULL,
       initials TEXT NOT NULL,
       is_owner INTEGER NOT NULL DEFAULT 0,
@@ -56,80 +62,35 @@ export function migrate() {
       UNIQUE(card_id, voter_id)
     );
   `);
+
+  ensureColumn("voters", "voter_key", "TEXT");
+  db.exec(`
+    UPDATE voters
+    SET voter_key = 'legacy-' || id
+    WHERE voter_key IS NULL OR voter_key = '';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS voters_shortlist_key_idx
+    ON voters(shortlist_id, voter_key)
+    WHERE voter_key IS NOT NULL;
+
+    DELETE FROM shortlists
+    WHERE id IN (
+      SELECT DISTINCT shortlist_id
+      FROM cards
+      WHERE trust_label LIKE 'Demo card%'
+    );
+  `);
 }
 
-const fallbackImages = ["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"];
-
-const baseSampleCards = [
-  {
-    title: "Mare Blu Suites",
-    sourceDomain: "booking.com",
-    sourceUrl: "https://www.booking.com/searchresults.html?ss=Crete%2C%20Greece",
-    location: "Crete, Greece",
-    priceLabel: "EUR 1,240 / 7 nights",
-    facts: ["3h flight", "Pool", "Family room", "4.6"],
-    trustLabel: "Demo card · verify total price before booking",
-    imagePath: "/assets/mare-blu.png"
-  },
-  {
-    title: "Beachfront Apartment",
-    sourceDomain: "airbnb.com",
-    sourceUrl: "https://www.airbnb.com/s/Split--Croatia/homes",
-    location: "Split, Croatia",
-    priceLabel: "EUR 1,090 / 7 nights",
-    facts: ["Sea view", "Kitchen", "2 bedrooms", "4.5"],
-    trustLabel: "Demo card · verify total price before booking",
-    imagePath: "/assets/beach-thumb.png"
-  },
-  {
-    title: "Sunrise Resort",
-    sourceDomain: "expedia.com",
-    sourceUrl: "https://www.expedia.com/Hotel-Search?destination=Malta",
-    location: "Malta",
-    priceLabel: "EUR 1,480 / 7 nights",
-    facts: ["Pool", "Breakfast", "Kids club", "4.4"],
-    trustLabel: "Demo card · verify total price before booking",
-    imagePath: "/assets/mare-thumb.png"
-  }
-];
-
-const extraSampleCards = [
-  ["Pine Cove Hotel", "booking.com", "https://www.booking.com/searchresults.html?ss=Algarve", "Algarve, Portugal", "EUR 1,180 / 7 nights", ["Pool", "Breakfast", "Family room", "4.5"]],
-  ["Harbor Family Villa", "airbnb.com", "https://www.airbnb.com/s/Algarve--Portugal/homes", "Tavira, Portugal", "EUR 1,320 / 7 nights", ["Kitchen", "Parking", "2 bedrooms", "4.7"]],
-  ["Olive Garden Stay", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Corfu", "Corfu, Greece", "EUR 1,360 / 7 nights", ["Garden", "Breakfast", "Beach shuttle", "4.4"]],
-  ["Blue Bay Rooms", "booking.com", "https://www.booking.com/searchresults.html?ss=Rhodes", "Rhodes, Greece", "EUR 1,110 / 7 nights", ["Sea view", "Pool", "Family room", "4.3"]],
-  ["Lagoon Apartment", "airbnb.com", "https://www.airbnb.com/s/Malta/homes", "Sliema, Malta", "EUR 1,060 / 7 nights", ["Kitchen", "Balcony", "Washer", "4.6"]],
-  ["Sunset Kids Resort", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Cyprus", "Paphos, Cyprus", "EUR 1,520 / 7 nights", ["Kids club", "Pool", "Breakfast", "4.5"]],
-  ["Old Town Guesthouse", "booking.com", "https://www.booking.com/searchresults.html?ss=Dubrovnik", "Dubrovnik, Croatia", "EUR 1,290 / 7 nights", ["Old town", "2 rooms", "AC", "4.4"]],
-  ["Citrus Coast Flat", "airbnb.com", "https://www.airbnb.com/s/Sicily--Italy/homes", "Sicily, Italy", "EUR 970 / 7 nights", ["Kitchen", "Sea nearby", "Parking", "4.5"]],
-  ["Aegean Pool House", "booking.com", "https://www.booking.com/searchresults.html?ss=Naxos", "Naxos, Greece", "EUR 1,410 / 7 nights", ["Pool", "Terrace", "Family room", "4.8"]],
-  ["Marina View Suite", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Split", "Split, Croatia", "EUR 1,220 / 7 nights", ["Marina", "Breakfast", "AC", "4.3"]],
-  ["Fig Tree Retreat", "airbnb.com", "https://www.airbnb.com/s/Cyprus/homes", "Protaras, Cyprus", "EUR 1,140 / 7 nights", ["Garden", "Washer", "2 bedrooms", "4.6"]],
-  ["Baystone Hotel", "booking.com", "https://www.booking.com/searchresults.html?ss=Madeira", "Madeira, Portugal", "EUR 1,260 / 7 nights", ["Pool", "Breakfast", "Sea view", "4.4"]],
-  ["White Sand Studios", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Sardinia", "Sardinia, Italy", "EUR 1,340 / 7 nights", ["Beach", "Kitchenette", "AC", "4.5"]],
-  ["Garden Pool Rooms", "booking.com", "https://www.booking.com/searchresults.html?ss=Kos", "Kos, Greece", "EUR 1,080 / 7 nights", ["Pool", "Family room", "Breakfast", "4.2"]],
-  ["Beach Gate Villa", "airbnb.com", "https://www.airbnb.com/s/Mallorca--Spain/homes", "Mallorca, Spain", "EUR 1,580 / 7 nights", ["Villa", "Pool", "Parking", "4.7"]],
-  ["Cove Breakfast Hotel", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Crete", "Crete, Greece", "EUR 1,190 / 7 nights", ["Breakfast", "Pool", "Beach nearby", "4.4"]],
-  ["Terrace Family Loft", "airbnb.com", "https://www.airbnb.com/s/Lisbon--Portugal/homes", "Lisbon Coast, Portugal", "EUR 1,030 / 7 nights", ["Terrace", "Washer", "Kitchen", "4.5"]],
-  ["Seabreeze Resort", "booking.com", "https://www.booking.com/searchresults.html?ss=Malta", "Gozo, Malta", "EUR 1,250 / 7 nights", ["Pool", "Sea view", "Family room", "4.6"]]
-].map(([title, sourceDomain, sourceUrl, location, priceLabel, facts], index) => ({
-  title,
-  sourceDomain,
-  sourceUrl,
-  location,
-  priceLabel,
-  facts,
-  trustLabel: "Demo card · verify total price before booking",
-  imagePath: fallbackImages[(index + baseSampleCards.length) % fallbackImages.length]
-}));
-
-const sampleCards = [...baseSampleCards, ...extraSampleCards];
-
-export function createShortlist({ title = "Summer hotels", participants = ["You", "Anna", "Tom", "Mia"], deadlineLabel = "Aim to decide by 21:00", links = [] } = {}) {
+export function createShortlist({ title = DEFAULT_TITLE, participants = [], deadlineLabel = DEFAULT_DEADLINE_LABEL, links = [] } = {}) {
   const code = nextCode();
   const normalizedLinks = normalizeLinks(links);
   const cardsToCreate = cardsFromLinks(normalizedLinks);
-  const shouldSeedDemoVotes = normalizedLinks.length === 0;
+  if (!cardsToCreate.length) {
+    throw new Error("Paste at least one valid http or https link.");
+  }
+
+  const participantNames = normalizeParticipants(participants);
   const insertShortlist = db.prepare("INSERT INTO shortlists (code, title, deadline_label) VALUES (?, ?, ?)");
   const insertCard = db.prepare(`
     INSERT INTO cards (
@@ -137,19 +98,14 @@ export function createShortlist({ title = "Summer hotels", participants = ["You"
       facts_json, trust_label, image_path, sort_order
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const insertVoter = db.prepare("INSERT INTO voters (shortlist_id, name, initials, is_owner) VALUES (?, ?, ?, ?)");
-  const insertVote = db.prepare(`
-    INSERT INTO votes (shortlist_id, card_id, voter_id, vote)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(card_id, voter_id) DO UPDATE SET vote = excluded.vote, updated_at = CURRENT_TIMESTAMP
-  `);
+  const insertVoter = db.prepare("INSERT INTO voters (shortlist_id, voter_key, name, initials, is_owner) VALUES (?, ?, ?, ?, ?)");
 
   db.exec("BEGIN");
   try {
-    const shortlistResult = insertShortlist.run(code, title, deadlineLabel);
+    const shortlistResult = insertShortlist.run(code, cleanTitle(title), cleanDeadline(deadlineLabel));
     const shortlistId = Number(shortlistResult.lastInsertRowid);
-    const cardIds = cardsToCreate.map((card, index) => {
-      const result = insertCard.run(
+    cardsToCreate.forEach((card, index) => {
+      insertCard.run(
         shortlistId,
         card.title,
         card.sourceDomain,
@@ -161,20 +117,11 @@ export function createShortlist({ title = "Summer hotels", participants = ["You"
         card.imagePath,
         index + 1
       );
-      return Number(result.lastInsertRowid);
     });
 
-    const voterIds = participants.map((name, index) => {
-      const result = insertVoter.run(shortlistId, name, initialsFor(name), index === 0 ? 1 : 0);
-      return { id: Number(result.lastInsertRowid), name };
+    participantNames.forEach((name, index) => {
+      insertVoter.run(shortlistId, `invite-${index + 1}-${slugFor(name)}`, name, initialsFor(name), index === 0 ? 1 : 0);
     });
-
-    if (shouldSeedDemoVotes) {
-      const firstCard = cardIds[0];
-      voterIds
-        .filter((voter) => voter.name !== "You")
-        .forEach((voter) => insertVote.run(shortlistId, firstCard, voter.id, voter.name === "Mia" ? "strong_yes" : "yes"));
-    }
 
     db.exec("COMMIT");
     return getShortlist(code, { includeVotes: false });
@@ -189,11 +136,25 @@ export function getShortlist(code, { includeVotes = false } = {}) {
   if (!shortlist) return null;
 
   const cards = db.prepare("SELECT * FROM cards WHERE shortlist_id = ? ORDER BY sort_order").all(shortlist.id).map(cardFromRow);
-  const voters = db.prepare("SELECT * FROM voters WHERE shortlist_id = ? ORDER BY id").all(shortlist.id).map(voterFromRow);
+  const voters = includeVotes ? db.prepare("SELECT * FROM voters WHERE shortlist_id = ? ORDER BY id").all(shortlist.id).map(voterFromRow) : [];
   const votes = includeVotes ? getVotes(shortlist.id) : [];
   const votedCount = db
     .prepare("SELECT COUNT(DISTINCT voter_id) AS count FROM votes WHERE shortlist_id = ?")
     .get(shortlist.id).count;
+  const completedVoterCount = cards.length
+    ? db
+        .prepare(`
+          SELECT COUNT(*) AS count
+          FROM (
+            SELECT voter_id
+            FROM votes
+            WHERE shortlist_id = ?
+            GROUP BY voter_id
+            HAVING COUNT(DISTINCT card_id) >= ?
+          )
+        `)
+        .get(shortlist.id, cards.length).count
+    : 0;
 
   return {
     id: shortlist.id,
@@ -203,18 +164,16 @@ export function getShortlist(code, { includeVotes = false } = {}) {
     cards,
     voters,
     votedCount,
+    completedVoterCount,
     votes
   };
 }
 
-export function recordVote({ code, cardId, voterName = "You", vote }) {
+export function recordVote({ code, cardId, voterKey, voterName = "Guest", vote }) {
   const shortlist = db.prepare("SELECT * FROM shortlists WHERE code = ?").get(code);
   if (!shortlist) return null;
 
-  const voter = db
-    .prepare("SELECT * FROM voters WHERE shortlist_id = ? AND lower(name) = lower(?)")
-    .get(shortlist.id, voterName);
-  if (!voter) throw new Error("Unknown voter");
+  const voter = ensureVoter(shortlist.id, { voterKey, voterName });
 
   const card = db.prepare("SELECT * FROM cards WHERE shortlist_id = ? AND id = ?").get(shortlist.id, cardId);
   if (!card) throw new Error("Unknown card");
@@ -228,13 +187,11 @@ export function recordVote({ code, cardId, voterName = "You", vote }) {
   return getResults(code);
 }
 
-export function deleteVote({ code, cardId, voterName = "You" }) {
+export function deleteVote({ code, cardId, voterKey, voterName = "Guest" }) {
   const shortlist = db.prepare("SELECT * FROM shortlists WHERE code = ?").get(code);
   if (!shortlist) return null;
 
-  const voter = db
-    .prepare("SELECT * FROM voters WHERE shortlist_id = ? AND lower(name) = lower(?)")
-    .get(shortlist.id, voterName);
+  const voter = findVoter(shortlist.id, { voterKey, voterName });
   if (!voter) throw new Error("Unknown voter");
 
   const card = db.prepare("SELECT * FROM cards WHERE shortlist_id = ? AND id = ?").get(shortlist.id, cardId);
@@ -244,18 +201,29 @@ export function deleteVote({ code, cardId, voterName = "You" }) {
   return getResults(code);
 }
 
-export function hasVoterVoted(code, voterName = "You") {
-  if (!voterName) return false;
-  const row = db
-    .prepare(`
-      SELECT COUNT(*) AS count
-      FROM votes
-      JOIN shortlists ON shortlists.id = votes.shortlist_id
-      JOIN voters ON voters.id = votes.voter_id
-      WHERE shortlists.code = ? AND lower(voters.name) = lower(?)
-    `)
-    .get(code, voterName);
+export function hasVoterVoted(code, voter = {}) {
+  const shortlist = db.prepare("SELECT id FROM shortlists WHERE code = ?").get(code);
+  if (!shortlist) return false;
+  const existing = findVoter(shortlist.id, normalizeVoterInput(voter));
+  if (!existing) return false;
+  const row = db.prepare("SELECT COUNT(*) AS count FROM votes WHERE shortlist_id = ? AND voter_id = ?").get(shortlist.id, existing.id);
   return Number(row?.count || 0) > 0;
+}
+
+export function hasVoterCompleted(code, voter = {}) {
+  const shortlist = db.prepare("SELECT id FROM shortlists WHERE code = ?").get(code);
+  if (!shortlist) return false;
+  const existing = findVoter(shortlist.id, normalizeVoterInput(voter));
+  if (!existing) return false;
+
+  const cardCount = Number(db.prepare("SELECT COUNT(*) AS count FROM cards WHERE shortlist_id = ?").get(shortlist.id)?.count || 0);
+  if (!cardCount) return false;
+
+  const voteCount = Number(
+    db.prepare("SELECT COUNT(DISTINCT card_id) AS count FROM votes WHERE shortlist_id = ? AND voter_id = ?").get(shortlist.id, existing.id)
+      ?.count || 0
+  );
+  return voteCount >= cardCount;
 }
 
 export function getResults(code) {
@@ -319,33 +287,31 @@ function normalizeLinks(links) {
         .map((link) => String(link || "").trim().replace(/[),.;]+$/g, ""))
         .filter(Boolean)
     )
-  );
+  ).slice(0, MAX_LINKS);
 }
 
 function cardsFromLinks(links) {
-  const cards = links
+  return links
     .map((link, index) => {
       try {
         const url = new URL(link);
+        if (!["http:", "https:"].includes(url.protocol)) return null;
         const domain = url.hostname.replace(/^www\./, "");
         return {
           title: titleFromUrl(url),
           sourceDomain: domain,
           sourceUrl: url.toString(),
-          location: "Open source link",
+          location: domain,
           priceLabel: "Price to verify",
-          facts: ["Imported", "One-tap vote", "Needs check"],
-          trustLabel: "Imported from pasted link · verify before booking",
-          imagePath: fallbackImages[index % fallbackImages.length]
+          facts: ["Imported link", "One-tap vote", "Needs check"],
+          trustLabel: "Imported from pasted link · verify details before deciding",
+          imagePath: DEFAULT_CARD_IMAGE
         };
       } catch {
         return null;
       }
     })
-    .filter(Boolean)
-    .slice(0, 50);
-
-  return cards.length ? cards : sampleCards;
+    .filter(Boolean);
 }
 
 function titleFromUrl(url) {
@@ -363,13 +329,14 @@ function titleFromUrl(url) {
 }
 
 function initialsFor(name) {
-  return name
+  const initials = name
     .trim()
     .split(/\s+/)
     .map((part) => part[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
+  return initials || "G";
 }
 
 function cardFromRow(row) {
@@ -407,4 +374,88 @@ function getVotes(shortlistId) {
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }));
+}
+
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
+  if (!columns.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function normalizeVoterInput(voter) {
+  if (typeof voter === "string") return { voterName: voter };
+  return voter || {};
+}
+
+function ensureVoter(shortlistId, voter) {
+  const existing = findVoter(shortlistId, voter);
+  if (existing) return existing;
+
+  const voterKey = cleanVoterKey(voter.voterKey || `name:${voter.voterName || "Guest"}`);
+  const name = uniqueVoterName(shortlistId, cleanVoterName(voter.voterName));
+  const result = db
+    .prepare("INSERT INTO voters (shortlist_id, voter_key, name, initials, is_owner) VALUES (?, ?, ?, ?, 0)")
+    .run(shortlistId, voterKey, name, initialsFor(name));
+  return db.prepare("SELECT * FROM voters WHERE id = ?").get(Number(result.lastInsertRowid));
+}
+
+function findVoter(shortlistId, voter) {
+  const voterKey = cleanVoterKey(voter.voterKey || "");
+  if (voterKey) {
+    const byKey = db.prepare("SELECT * FROM voters WHERE shortlist_id = ? AND voter_key = ?").get(shortlistId, voterKey);
+    if (byKey) return byKey;
+    return null;
+  }
+
+  const voterName = cleanVoterName(voter.voterName || "");
+  if (!voterName) return null;
+  return db.prepare("SELECT * FROM voters WHERE shortlist_id = ? AND lower(name) = lower(?)").get(shortlistId, voterName);
+}
+
+function cleanTitle(title) {
+  const clean = String(title || "").trim().replace(/\s+/g, " ").slice(0, 80);
+  return clean || DEFAULT_TITLE;
+}
+
+function cleanDeadline(label) {
+  const clean = String(label || "").trim().replace(/\s+/g, " ").slice(0, 80);
+  return clean || DEFAULT_DEADLINE_LABEL;
+}
+
+function cleanVoterName(name) {
+  const clean = String(name || "").trim().replace(/\s+/g, " ").slice(0, 40);
+  return clean || "Guest";
+}
+
+function cleanVoterKey(key) {
+  return String(key || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9:._-]/g, "")
+    .slice(0, 80);
+}
+
+function normalizeParticipants(participants) {
+  if (!Array.isArray(participants)) return [];
+  return Array.from(new Set(participants.map(cleanVoterName))).filter(Boolean).slice(0, 20);
+}
+
+function uniqueVoterName(shortlistId, name) {
+  const base = cleanVoterName(name);
+  let candidate = base;
+  for (let suffix = 2; suffix < 100; suffix += 1) {
+    const existing = db.prepare("SELECT id FROM voters WHERE shortlist_id = ? AND lower(name) = lower(?)").get(shortlistId, candidate);
+    if (!existing) return candidate;
+    candidate = `${base} ${suffix}`;
+  }
+  return `${base} ${randomInt(1000, 10000)}`;
+}
+
+function slugFor(value) {
+  return cleanVoterKey(
+    String(value || "guest")
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "")
+  );
 }

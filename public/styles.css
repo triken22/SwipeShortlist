@@ -43,6 +43,12 @@ button {
   cursor: pointer;
 }
 
+button:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 button:focus-visible,
 a:focus-visible {
   outline: 3px solid rgba(31, 122, 77, 0.28);
@@ -327,11 +333,37 @@ button.code-pill:hover {
   padding-bottom: 0;
 }
 
-.preview-row img {
+.preview-media {
+  position: relative;
+  overflow: hidden;
   width: 82px;
   height: 58px;
-  object-fit: cover;
   border-radius: var(--radius);
+  background: var(--soft);
+}
+
+.preview-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-media span {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  padding: 3px 5px;
+  border-radius: 5px;
+  color: #fff;
+  background: rgba(17, 17, 17, 0.74);
+  font-size: 0.58rem;
+  font-weight: 820;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .preview-row strong {
@@ -352,6 +384,13 @@ button.code-pill:hover {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.15;
+}
+
+.empty-preview {
+  padding: 16px 0 2px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.25;
 }
 
 .voter-panel {
@@ -443,10 +482,33 @@ button.code-pill:hover {
   line-height: 1.18;
 }
 
-.private-row span {
+.private-row > span {
   grid-column: 1 / -1;
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+.identity-field {
+  display: grid;
+  grid-column: 1;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.83rem;
+  font-weight: 760;
+}
+
+.identity-field input {
+  min-width: 0;
+  height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: #fff;
+  font-size: 0.88rem;
+  font-weight: 780;
 }
 
 .avatar-dots {
@@ -542,11 +604,45 @@ button.code-pill:hover {
   transform: translateX(-50%);
 }
 
-.vote-card img {
+.card-media,
+.winner-media {
+  position: relative;
+  overflow: hidden;
+  background: var(--soft);
+}
+
+.card-media {
+  height: 260px;
+}
+
+.winner-media {
+  height: 210px;
+}
+
+.card-media img,
+.winner-media img {
   display: block;
   width: 100%;
-  height: 260px;
+  height: 100%;
   object-fit: cover;
+}
+
+.card-media span,
+.winner-media span {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  max-width: calc(100% - 28px);
+  overflow: hidden;
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  color: #fff;
+  background: rgba(17, 17, 17, 0.78);
+  font-size: 0.72rem;
+  font-weight: 820;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-body {
@@ -608,6 +704,33 @@ button.code-pill:hover {
   color: var(--muted);
   font-size: 0.83rem;
   line-height: 1.22;
+}
+
+.source-link {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: #171512;
+  background: #fff;
+  font-size: 0.9rem;
+  font-weight: 820;
+  text-decoration: none;
+}
+
+.source-link:hover {
+  border-color: var(--line-strong);
+  background: var(--soft);
+}
+
+.source-link svg {
+  width: 18px;
+  height: 18px;
 }
 
 .swipe-cue {
@@ -766,13 +889,6 @@ button.code-pill:hover {
 .winner-card {
   overflow: hidden;
   margin-top: 22px;
-}
-
-.winner-card img {
-  display: block;
-  width: 100%;
-  height: 210px;
-  object-fit: cover;
 }
 
 .winner-body {

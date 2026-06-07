@@ -3,11 +3,17 @@ const state = {
   results: null,
   currentIndex: 0,
   votedCardIds: new Set(),
+  voterKey: "",
+  voterName: "You",
   isVoting: false,
   lastVote: null,
   drag: null,
   routeScreen: "create"
 };
+
+const DEFAULT_TITLE = "Private shortlist";
+const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
+const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"]);
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -20,22 +26,8 @@ init().catch((error) => {
 async function init() {
   wireControls();
   const initialRoute = parseRoute();
-  const savedCode = initialRoute.code || localStorage.getItem("swipe-shortlist-code");
-  if (savedCode) {
-    const existing = await api(`/api/shortlists/${encodeURIComponent(savedCode)}`, { allow404: true });
-    if (existing) {
-      state.shortlist = existing;
-      loadLocalVotes();
-    }
-  }
-
-  if (!state.shortlist) {
-    state.shortlist = await api("/api/shortlists", {
-      method: "POST",
-      body: JSON.stringify({})
-    });
-    localStorage.setItem("swipe-shortlist-code", state.shortlist.code);
-    loadLocalVotes();
+  if (initialRoute.code) {
+    await loadShortlist(initialRoute.code);
   }
 
   renderAll();
@@ -69,7 +61,11 @@ function wireControls() {
   $("[data-link-input]")?.addEventListener("input", () => {
     renderPreview();
     const count = linksFromInput().length;
-    if (count) setStatus(`${count} links ready to import.`);
+    if (count) {
+      setStatus(`${count} ${count === 1 ? "link is" : "links are"} ready to import.`);
+    } else {
+      setStatus("Paste at least one full http or https link.");
+    }
   });
 
   $("[data-focus-links]")?.addEventListener("click", () => {
@@ -80,10 +76,19 @@ function wireControls() {
 
   $$("[data-create-shortlist]").forEach((button) => {
     button.addEventListener("click", async () => {
+      const links = linksFromInput();
+      if (!links.length) {
+        const input = $("[data-link-input]");
+        input?.classList.remove("is-hidden");
+        input?.focus();
+        setStatus("Paste at least one full http or https link first.");
+        renderPreview();
+        return;
+      }
+
       button.disabled = true;
       setStatus("Creating private voting link...");
       try {
-        const links = linksFromInput();
         state.shortlist = await api("/api/shortlists", {
           method: "POST",
           body: JSON.stringify({ links })
@@ -91,16 +96,18 @@ function wireControls() {
         state.results = null;
         state.currentIndex = 0;
         state.votedCardIds.clear();
-        localStorage.setItem("swipe-shortlist-code", state.shortlist.code);
+        state.voterKey = getOrCreateVoterKey(state.shortlist.code);
+        state.voterName = loadVoterName(state.shortlist.code);
+        localStorage.setItem("swipe-shortlist-last-code", state.shortlist.code);
         saveLocalVotes();
         renderAll();
-        setStatus(links.length ? `Imported ${links.length} links. Private link ready: ${shareUrl()}` : `Demo link ready: ${shareUrl()}`);
+        setStatus(`Imported ${links.length} ${links.length === 1 ? "link" : "links"}. Private link ready: ${shareUrl()}`);
         location.hash = routeHash("vote");
       } catch (error) {
         console.error(error);
-        setStatus("Could not create the link. Check the pasted URLs and try again.");
+        setStatus(error.message.includes("400") ? "Paste at least one valid http or https link." : "Could not create the link. Try again.");
       } finally {
-        button.disabled = false;
+        renderPreview();
       }
     });
   });
@@ -117,11 +124,19 @@ function wireControls() {
     button.addEventListener("click", copyShareLink);
   });
 
+  $("[data-voter-name]")?.addEventListener("input", (event) => {
+    if (!state.shortlist) return;
+    state.voterName = event.target.value.trim() || "You";
+    localStorage.setItem(voterNameStorageKey(state.shortlist.code), state.voterName);
+  });
+
   const card = $("[data-current-card]");
   card?.addEventListener("pointerdown", handleCardPointerDown);
   card?.addEventListener("pointermove", handleCardPointerMove);
   card?.addEventListener("pointerup", handleCardPointerUp);
   card?.addEventListener("pointercancel", resetDrag);
+  window.addEventListener("pointerup", handleCardPointerUp);
+  window.addEventListener("pointercancel", resetDrag);
 
   $$("[data-screen-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -134,11 +149,6 @@ function wireControls() {
   });
 
   $("[data-send-final]")?.addEventListener("click", async () => {
-    if (!hasVotedLocally()) {
-      $("[data-send-status]").textContent = "Vote first, then send the final pick.";
-      location.hash = routeHash("vote");
-      return;
-    }
     const loaded = state.results?.winner ? state.results : await loadResults();
     if (loaded?.locked || !loaded?.winner) {
       renderLockedResults();
@@ -156,13 +166,14 @@ function wireControls() {
 }
 
 function renderAll() {
-  if (!state.shortlist) return;
   $$("[data-code]").forEach((node) => {
-    node.textContent = state.shortlist.code;
+    node.textContent = state.shortlist?.code || "New";
+    if (node.tagName === "BUTTON") node.disabled = !state.shortlist;
   });
   $$("[data-title]").forEach((node) => {
-    node.textContent = state.shortlist.title;
+    node.textContent = state.shortlist?.title || DEFAULT_TITLE;
   });
+  renderIdentity();
   renderPreview();
   renderVoters();
   renderVoteContext();
@@ -172,21 +183,22 @@ function renderAll() {
 function renderPreview() {
   const list = $("[data-preview-list]");
   const importedLinks = linksFromInput();
-  const cards = importedLinks.length ? previewCardsFromLinks(importedLinks) : state.shortlist.cards;
+  const cards = importedLinks.length ? previewCardsFromLinks(importedLinks) : [];
+
   $("[data-found-count]").textContent = importedLinks.length
-    ? `${cards.length} pasted links ready to become cards`
-    : `${state.shortlist.cards.length} cards ready enough to vote`;
+    ? `${cards.length} pasted ${cards.length === 1 ? "link is" : "links are"} ready`
+    : "Paste links to create cards";
   $("[data-found-note]").textContent = importedLinks.length
-    ? "We will keep prices unverified until the source is checked."
-    : state.shortlist.cards.some((card) => card.priceLabel === "Price to verify")
-      ? "Imported links need facts checked before booking."
-      : "Demo cards need details checked later.";
-  list.innerHTML = cards
+    ? "Prices and facts stay unverified until someone opens the source."
+    : "Nothing is stored until you create a private voting link.";
+
+  list.innerHTML = cards.length
+    ? cards
     .slice(0, 3)
     .map(
       (card) => `
         <article class="preview-row">
-          <img src="${escapeAttr(card.imagePath)}" alt="" />
+          ${cardMediaMarkup(card, "preview-media")}
           <div>
             <strong>${escapeHtml(card.title)}</strong>
             <span>${escapeHtml(card.location)} · ${escapeHtml(card.priceLabel)}</span>
@@ -194,33 +206,61 @@ function renderPreview() {
         </article>
       `
     )
-    .join("");
+    .join("")
+    : `<div class="empty-preview">Add one or more links from the group chat.</div>`;
+
+  updateCreateActions(importedLinks.length > 0);
 }
 
 function renderVoters() {
   const chips = $("[data-voter-chips]");
   const avatars = $("[data-avatar-dots]");
-  const chipMarkup = state.shortlist.voters.map((voter) => `<span class="chip">${escapeHtml(voter.name)}</span>`).join("");
-  const avatarMarkup = state.shortlist.voters.map((voter) => `<span class="avatar">${escapeHtml(voter.initials)}</span>`).join("");
-  chips.innerHTML = chipMarkup;
-  avatars.innerHTML = avatarMarkup;
+  const voters = state.shortlist?.voters || [];
+  chips.innerHTML = voters.length
+    ? voters.map((voter) => `<span class="chip">${escapeHtml(voter.name)}</span>`).join("")
+    : `<span class="chip">One private link</span><span class="chip">No accounts</span>`;
+  avatars.innerHTML = voters.length
+    ? voters.map((voter) => `<span class="avatar">${escapeHtml(voter.initials)}</span>`).join("")
+    : `<span class="avatar">Y</span>`;
 }
 
 function renderVoteContext() {
   const node = $("[data-vote-context]");
-  if (hasVotedLocally()) {
-    const votedCount = Math.max(Number(state.shortlist.votedCount || 0), 1);
-    node.textContent = `${votedCount} ${votedCount === 1 ? "person has" : "people have"} voted · aim for 21:00`;
-  } else {
-    node.textContent = "Private until you choose · aim for 21:00";
+  const progressNode = $(".progress");
+  if (!state.shortlist) {
+    node.textContent = "Open a private voting link to start.";
+    if (progressNode) progressNode.textContent = "0 / 0";
+    return;
   }
-  $(".progress").textContent = `${Math.min(state.currentIndex + 1, state.shortlist.cards.length)} / ${state.shortlist.cards.length}`;
+
+  const total = state.shortlist.cards.length;
+  const saved = state.votedCardIds.size;
+  if (saved >= total) {
+    const completed = Math.max(Number(state.shortlist.completedVoterCount || 0), 1);
+    node.textContent = `Your deck is done · ${completed} ${completed === 1 ? "person" : "people"} finished`;
+  } else if (saved > 0) {
+    node.textContent = `${saved}/${total} choices saved · results unlock after the deck`;
+  } else {
+    node.textContent = "Private until your deck is done";
+  }
+  if (progressNode) progressNode.textContent = `${Math.min(state.currentIndex + 1, total)} / ${total}`;
 }
 
 function renderCurrentCard() {
   const card = currentCard();
   const target = $("[data-current-card]");
   resetDrag();
+  if (!state.shortlist) {
+    target.innerHTML = `
+      <div class="card-body is-empty-card">
+        <span class="domain">No shortlist loaded</span>
+        <h2>Paste links to start</h2>
+        <p class="trust">Create a private link first, then the vote deck appears here.</p>
+      </div>
+    `;
+    return;
+  }
+
   if (!card) {
     target.innerHTML = `
       <div class="card-body">
@@ -233,7 +273,7 @@ function renderCurrentCard() {
   }
 
   target.innerHTML = `
-    <img src="${escapeAttr(card.imagePath)}" alt="" />
+    ${cardMediaMarkup(card, "card-media")}
     <div class="card-body">
       <span class="domain">${escapeHtml(card.sourceDomain)}</span>
       <h2>${escapeHtml(card.title)}</h2>
@@ -249,18 +289,16 @@ function renderCurrentCard() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
         ${escapeHtml(card.trustLabel)}
       </span>
+      <a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">
+        Open source link
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
+      </a>
     </div>
   `;
 }
 
 async function renderResults() {
-  if (!hasVotedLocally()) {
-    renderLockedResults();
-    return;
-  }
-  if (!state.results) {
-    await loadResults();
-  }
+  await loadResults();
   if (state.results?.locked) {
     renderLockedResults();
     return;
@@ -287,7 +325,7 @@ async function renderResults() {
   $("[data-send-final]").innerHTML = `Send final pick <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" /></svg>`;
   $("[data-send-status]").textContent = "Ready to copy for the group chat.";
   $("[data-winner-card]").innerHTML = `
-    <img src="${escapeAttr(winner.imagePath)}" alt="" />
+    ${cardMediaMarkup(winner, "winner-media")}
     <div class="winner-body">
       <span class="domain">${escapeHtml(winner.sourceDomain)}</span>
       <h3>${escapeHtml(winner.title)}</h3>
@@ -302,16 +340,25 @@ async function renderResults() {
         <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
         <span class="score"><strong>${winner.noCount}</strong><span>no</span></span>
       </div>
+      <a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
+        Open final link
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
+      </a>
     </div>
   `;
-  $("[data-backup-row]")?.classList.remove("is-hidden");
+  $("[data-backup-row]")?.classList.toggle("is-hidden", !state.results?.backups?.length);
 }
 
 async function loadResults() {
   if (!state.shortlist) return null;
-  state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/results?voterName=${encodeURIComponent("You")}`, {
+  const params = new URLSearchParams({
+    voterKey: currentVoterKey(),
+    voterName: currentVoterName()
+  });
+  state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/results?${params.toString()}`, {
     allowForbidden: true
   });
+  applyResultsShortlist(state.results);
   return state.results;
 }
 
@@ -329,10 +376,12 @@ async function castVote(vote) {
       method: "POST",
       body: JSON.stringify({
         cardId: card.id,
-        voterName: "You",
+        voterKey: currentVoterKey(),
+        voterName: currentVoterName(),
         vote
       })
     });
+    applyResultsShortlist(state.results);
     state.lastVote = { cardId: card.id, cardTitle: card.title, index: state.currentIndex, vote };
     state.votedCardIds.add(card.id);
     saveLocalVotes();
@@ -358,9 +407,11 @@ async function undoLastVote() {
       method: "DELETE",
       body: JSON.stringify({
         cardId: undone.cardId,
-        voterName: "You"
+        voterKey: currentVoterKey(),
+        voterName: currentVoterName()
       })
     });
+    applyResultsShortlist(state.results);
     state.votedCardIds.delete(undone.cardId);
     state.currentIndex = undone.index;
     state.lastVote = null;
@@ -408,6 +459,7 @@ function advanceCard() {
 
 function handleCardPointerDown(event) {
   if (!currentCard() || state.isVoting) return;
+  if (event.target.closest?.("a, button, input, textarea")) return;
   state.drag = {
     pointerId: event.pointerId,
     startX: event.clientX,
@@ -456,22 +508,17 @@ function resetDrag() {
 async function handleRoute() {
   const route = parseRoute();
   if (route.code && (!state.shortlist || state.shortlist.code !== route.code)) {
-    const existing = await api(`/api/shortlists/${encodeURIComponent(route.code)}`, { allow404: true });
-    if (existing) {
-      state.shortlist = existing;
-      state.results = null;
-      state.currentIndex = 0;
-      localStorage.setItem("swipe-shortlist-code", state.shortlist.code);
-      loadLocalVotes();
-      renderAll();
-    }
+    await loadShortlist(route.code);
+  }
+  if (!route.code && route.screen !== "create") {
+    setStatus("Create or open a private voting link first.");
   }
   showScreen(route.screen);
 }
 
 function showScreen(name) {
   const allowed = new Set(["create", "vote", "result"]);
-  const next = allowed.has(name) ? name : "create";
+  const next = allowed.has(name) && (name === "create" || state.shortlist) ? name : "create";
   state.routeScreen = next;
   $$("[data-screen]").forEach((screen) => {
     screen.classList.toggle("is-active", screen.dataset.screen === next);
@@ -505,7 +552,7 @@ function setStatus(message) {
 }
 
 function shareUrl() {
-  return `${location.origin}${routeHash("vote")}`;
+  return state.shortlist ? `${location.origin}${routeHash("vote")}` : "";
 }
 
 function voteLabel(vote) {
@@ -524,7 +571,10 @@ function extractLinks(text) {
 }
 
 async function copyShareLink() {
-  if (!state.shortlist) return;
+  if (!state.shortlist) {
+    setStatus("Create the private voting link first.");
+    return;
+  }
   const text = shareUrl();
   try {
     await navigator.clipboard?.writeText(text);
@@ -541,9 +591,9 @@ function previewCardsFromLinks(links) {
       return {
         title: titleFromUrl(url),
         sourceDomain: sourceDomain(url),
-        location: "Open source link",
+        location: sourceDomain(url),
         priceLabel: "Price to verify",
-        imagePath: "/assets/beach-thumb.png"
+        imagePath: DEFAULT_CARD_IMAGE
       };
     } catch {
       return {
@@ -551,7 +601,7 @@ function previewCardsFromLinks(links) {
         sourceDomain: "Check URL",
         location: "Paste a full https:// link",
         priceLabel: "Not imported",
-        imagePath: "/assets/mare-thumb.png"
+        imagePath: DEFAULT_CARD_IMAGE
       };
     }
   });
@@ -575,22 +625,102 @@ function titleFromUrl(url) {
 function renderLockedResults() {
   $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Private result`;
   $("[data-result-topbar]").textContent = "Private result";
-  $("[data-result-heading]").textContent = "Vote first, then see the winner";
-  $("[data-result-subheading]").textContent = "Your choice stays private and unlocks the group answer.";
-  $("[data-send-final]").innerHTML = `Vote first <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
+  $("[data-result-heading]").textContent = "Finish the deck to see the winner";
+  $("[data-result-subheading]").textContent = "Peer votes stay hidden until you have made a choice on every card.";
+  $("[data-send-final]").innerHTML = `Finish voting <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
   $("[data-winner-card]").innerHTML = `
     <div class="winner-body">
       <span class="domain">private result</span>
       <h3>Your vote is still hidden</h3>
-      <span class="trust">Choose No, Hold, or Yes on at least one card before group results are revealed.</span>
+      <span class="trust">Choose No, Hold, or Yes on every card before group results are revealed.</span>
     </div>
   `;
   $("[data-backup-row]")?.classList.add("is-hidden");
-  $("[data-send-status]").textContent = "Results open after your vote";
+  $("[data-send-status]").textContent = "Results open after your deck is complete";
 }
 
 function hasVotedLocally() {
-  return state.votedCardIds.size > 0;
+  return Boolean(state.shortlist?.cards?.length && state.votedCardIds.size >= state.shortlist.cards.length);
+}
+
+async function loadShortlist(code) {
+  const existing = await api(`/api/shortlists/${encodeURIComponent(code)}`, { allow404: true });
+  if (!existing) {
+    state.shortlist = null;
+    state.results = null;
+    state.currentIndex = 0;
+    state.votedCardIds.clear();
+    setStatus("That private voting link was not found.");
+    renderAll();
+    return false;
+  }
+
+  state.shortlist = existing;
+  state.results = null;
+  state.voterKey = getOrCreateVoterKey(existing.code);
+  state.voterName = loadVoterName(existing.code);
+  loadLocalVotes();
+  syncCurrentIndex();
+  renderAll();
+  return true;
+}
+
+function applyResultsShortlist(results) {
+  if (!results?.shortlist) return;
+  state.shortlist = {
+    ...state.shortlist,
+    voters: results.shortlist.voters || state.shortlist?.voters || [],
+    votedCount: results.shortlist.votedCount || 0,
+    completedVoterCount: results.shortlist.completedVoterCount || 0
+  };
+}
+
+function syncCurrentIndex() {
+  const cards = state.shortlist?.cards || [];
+  const nextIndex = cards.findIndex((card) => !state.votedCardIds.has(card.id));
+  state.currentIndex = nextIndex === -1 ? cards.length : nextIndex;
+}
+
+function renderIdentity() {
+  const input = $("[data-voter-name]");
+  if (!input) return;
+  input.value = state.voterName || "You";
+  input.disabled = !state.shortlist;
+}
+
+function updateCreateActions(canCreate) {
+  $$("[data-create-shortlist]").forEach((button) => {
+    button.disabled = !canCreate;
+  });
+}
+
+function currentVoterKey() {
+  if (!state.shortlist) return "";
+  if (!state.voterKey) state.voterKey = getOrCreateVoterKey(state.shortlist.code);
+  return state.voterKey;
+}
+
+function currentVoterName() {
+  return (state.voterName || "You").trim() || "You";
+}
+
+function getOrCreateVoterKey(code) {
+  const storageKey = `swipe-shortlist-voter-key-${code}`;
+  const existing = localStorage.getItem(storageKey);
+  if (existing) return existing;
+  const next =
+    globalThis.crypto?.randomUUID?.() ||
+    `voter-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  localStorage.setItem(storageKey, next);
+  return next;
+}
+
+function loadVoterName(code) {
+  return localStorage.getItem(voterNameStorageKey(code)) || "You";
+}
+
+function voterNameStorageKey(code) {
+  return `swipe-shortlist-voter-name-${code}`;
 }
 
 function voteStorageKey() {
@@ -607,6 +737,16 @@ function loadLocalVotes() {
 
 function saveLocalVotes() {
   localStorage.setItem(voteStorageKey(), JSON.stringify(Array.from(state.votedCardIds)));
+}
+
+function cardMediaMarkup(card, className) {
+  const imagePath = card?.imagePath && !RETIRED_IMAGE_PATHS.has(card.imagePath) ? card.imagePath : DEFAULT_CARD_IMAGE;
+  return `
+    <div class="${className}">
+      <img src="${escapeAttr(imagePath)}" alt="" loading="lazy" />
+      <span>${escapeHtml(card?.sourceDomain || "link")}</span>
+    </div>
+  `;
 }
 
 function parseRoute() {

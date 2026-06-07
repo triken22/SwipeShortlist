@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/triken22/SwipeShortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/triken22/SwipeShortlist/actions/workflows/ci.yml)
 
-SwipeShortlist turns messy group-chat links into one private voting flow and one final pick. It is intentionally simple: create a shortlist, share the private link, vote through cards with No/Hold/Yes, then send the winner.
+SwipeShortlist turns messy group-chat links into one private voting flow and one final pick. It is intentionally simple: paste real links, share the private link, vote through cards with No/Hold/Yes, then send the winner. Empty shortlists are rejected; the app does not seed example cards.
 
 ## Project Status
 

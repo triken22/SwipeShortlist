@@ -1,7 +1,7 @@
 import { createReadStream, existsSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { createServer } from "node:http";
-import { createShortlist, deleteVote, getResults, getShortlist, hasVoterVoted, migrate, recordVote } from "./db.js";
+import { createShortlist, deleteVote, getResults, getShortlist, hasVoterCompleted, migrate, recordVote } from "./db.js";
 
 const ROOT = resolve(process.cwd());
 const PUBLIC_DIR = resolve(ROOT, "public");
@@ -22,9 +22,9 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       if (body.error) return json(res, 400, { error: body.error });
       const shortlist = createShortlist({
-        title: body.title || "Summer hotels",
-        participants: Array.isArray(body.participants) && body.participants.length ? body.participants : ["You", "Anna", "Tom", "Mia"],
-        deadlineLabel: body.deadlineLabel || "Aim to decide by 21:00",
+        title: body.title,
+        participants: Array.isArray(body.participants) ? body.participants : [],
+        deadlineLabel: body.deadlineLabel,
         links: body.links || []
       });
       return json(res, 201, shortlist);
@@ -46,7 +46,8 @@ const server = createServer(async (req, res) => {
       const results = recordVote({
         code: decodeURIComponent(voteMatch[1]),
         cardId: Number(body.cardId),
-        voterName: body.voterName || "You",
+        voterKey: body.voterKey,
+        voterName: body.voterName || "Guest",
         vote: body.vote
       });
       return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
@@ -58,7 +59,8 @@ const server = createServer(async (req, res) => {
       const results = deleteVote({
         code: decodeURIComponent(voteMatch[1]),
         cardId: Number(body.cardId),
-        voterName: body.voterName || "You"
+        voterKey: body.voterKey,
+        voterName: body.voterName || "Guest"
       });
       return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
     }
@@ -66,9 +68,10 @@ const server = createServer(async (req, res) => {
     const resultMatch = url.pathname.match(/^\/api\/shortlists\/([^/]+)\/results$/);
     if (req.method === "GET" && resultMatch) {
       const code = decodeURIComponent(resultMatch[1]);
+      const voterKey = url.searchParams.get("voterKey") || "";
       const voterName = url.searchParams.get("voterName") || "";
-      if (!hasVoterVoted(code, voterName)) {
-        return json(res, 200, { locked: true, error: "Vote before results" });
+      if (!hasVoterCompleted(code, { voterKey, voterName })) {
+        return json(res, 200, { locked: true, error: "Finish voting before results" });
       }
       const results = getResults(code);
       return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
@@ -80,10 +83,14 @@ const server = createServer(async (req, res) => {
 
     json(res, 405, { error: "Method not allowed" });
   } catch (error) {
-    console.error(error);
-    if (error.message === "Unknown voter" || error.message === "Unknown card") {
+    if (
+      error.message === "Unknown voter" ||
+      error.message === "Unknown card" ||
+      error.message === "Paste at least one valid http or https link."
+    ) {
       return json(res, 400, { error: error.message });
     }
+    console.error(error);
     json(res, 500, { error: "Internal server error" });
   }
 });
