@@ -13,7 +13,7 @@ test("creates a shortlist and ranks a winner after votes", async () => {
     dbModule.migrate();
     const shortlist = dbModule.createShortlist({ title: "Test trip" });
     assert.equal(shortlist.title, "Test trip");
-    assert.equal(shortlist.cards.length, 3);
+    assert.equal(shortlist.cards.length, 21);
     assert.equal(shortlist.voters.length, 4);
 
     const results = dbModule.recordVote({

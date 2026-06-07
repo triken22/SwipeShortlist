@@ -60,7 +60,7 @@ export function migrate() {
 
 const fallbackImages = ["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"];
 
-const sampleCards = [
+const baseSampleCards = [
   {
     title: "Mare Blu Suites",
     sourceDomain: "booking.com",
@@ -92,6 +92,38 @@ const sampleCards = [
     imagePath: "/assets/mare-thumb.png"
   }
 ];
+
+const extraSampleCards = [
+  ["Pine Cove Hotel", "booking.com", "https://www.booking.com/searchresults.html?ss=Algarve", "Algarve, Portugal", "EUR 1,180 / 7 nights", ["Pool", "Breakfast", "Family room", "4.5"]],
+  ["Harbor Family Villa", "airbnb.com", "https://www.airbnb.com/s/Algarve--Portugal/homes", "Tavira, Portugal", "EUR 1,320 / 7 nights", ["Kitchen", "Parking", "2 bedrooms", "4.7"]],
+  ["Olive Garden Stay", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Corfu", "Corfu, Greece", "EUR 1,360 / 7 nights", ["Garden", "Breakfast", "Beach shuttle", "4.4"]],
+  ["Blue Bay Rooms", "booking.com", "https://www.booking.com/searchresults.html?ss=Rhodes", "Rhodes, Greece", "EUR 1,110 / 7 nights", ["Sea view", "Pool", "Family room", "4.3"]],
+  ["Lagoon Apartment", "airbnb.com", "https://www.airbnb.com/s/Malta/homes", "Sliema, Malta", "EUR 1,060 / 7 nights", ["Kitchen", "Balcony", "Washer", "4.6"]],
+  ["Sunset Kids Resort", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Cyprus", "Paphos, Cyprus", "EUR 1,520 / 7 nights", ["Kids club", "Pool", "Breakfast", "4.5"]],
+  ["Old Town Guesthouse", "booking.com", "https://www.booking.com/searchresults.html?ss=Dubrovnik", "Dubrovnik, Croatia", "EUR 1,290 / 7 nights", ["Old town", "2 rooms", "AC", "4.4"]],
+  ["Citrus Coast Flat", "airbnb.com", "https://www.airbnb.com/s/Sicily--Italy/homes", "Sicily, Italy", "EUR 970 / 7 nights", ["Kitchen", "Sea nearby", "Parking", "4.5"]],
+  ["Aegean Pool House", "booking.com", "https://www.booking.com/searchresults.html?ss=Naxos", "Naxos, Greece", "EUR 1,410 / 7 nights", ["Pool", "Terrace", "Family room", "4.8"]],
+  ["Marina View Suite", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Split", "Split, Croatia", "EUR 1,220 / 7 nights", ["Marina", "Breakfast", "AC", "4.3"]],
+  ["Fig Tree Retreat", "airbnb.com", "https://www.airbnb.com/s/Cyprus/homes", "Protaras, Cyprus", "EUR 1,140 / 7 nights", ["Garden", "Washer", "2 bedrooms", "4.6"]],
+  ["Baystone Hotel", "booking.com", "https://www.booking.com/searchresults.html?ss=Madeira", "Madeira, Portugal", "EUR 1,260 / 7 nights", ["Pool", "Breakfast", "Sea view", "4.4"]],
+  ["White Sand Studios", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Sardinia", "Sardinia, Italy", "EUR 1,340 / 7 nights", ["Beach", "Kitchenette", "AC", "4.5"]],
+  ["Garden Pool Rooms", "booking.com", "https://www.booking.com/searchresults.html?ss=Kos", "Kos, Greece", "EUR 1,080 / 7 nights", ["Pool", "Family room", "Breakfast", "4.2"]],
+  ["Beach Gate Villa", "airbnb.com", "https://www.airbnb.com/s/Mallorca--Spain/homes", "Mallorca, Spain", "EUR 1,580 / 7 nights", ["Villa", "Pool", "Parking", "4.7"]],
+  ["Cove Breakfast Hotel", "expedia.com", "https://www.expedia.com/Hotel-Search?destination=Crete", "Crete, Greece", "EUR 1,190 / 7 nights", ["Breakfast", "Pool", "Beach nearby", "4.4"]],
+  ["Terrace Family Loft", "airbnb.com", "https://www.airbnb.com/s/Lisbon--Portugal/homes", "Lisbon Coast, Portugal", "EUR 1,030 / 7 nights", ["Terrace", "Washer", "Kitchen", "4.5"]],
+  ["Seabreeze Resort", "booking.com", "https://www.booking.com/searchresults.html?ss=Malta", "Gozo, Malta", "EUR 1,250 / 7 nights", ["Pool", "Sea view", "Family room", "4.6"]]
+].map(([title, sourceDomain, sourceUrl, location, priceLabel, facts], index) => ({
+  title,
+  sourceDomain,
+  sourceUrl,
+  location,
+  priceLabel,
+  facts,
+  trustLabel: "Demo card · verify total price before booking",
+  imagePath: fallbackImages[(index + baseSampleCards.length) % fallbackImages.length]
+}));
+
+const sampleCards = [...baseSampleCards, ...extraSampleCards];
 
 export function createShortlist({ title = "Summer hotels", participants = ["You", "Anna", "Tom", "Mia"], deadlineLabel = "Aim to decide by 21:00", links = [] } = {}) {
   const code = nextCode();

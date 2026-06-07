@@ -162,7 +162,7 @@ function renderPreview() {
   $("[data-found-count]").textContent = `${state.shortlist.cards.length} cards ready enough to vote`;
   $("[data-found-note]").textContent = state.shortlist.cards.some((card) => card.priceLabel === "Price to verify")
     ? "Imported links need facts checked before booking."
-    : "Demo cards are ready for the voting flow.";
+    : "3 cards need details checked later.";
   list.innerHTML = state.shortlist.cards
     .slice(0, 3)
     .map(
