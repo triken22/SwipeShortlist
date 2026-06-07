@@ -36,6 +36,15 @@ Match the screenshots' hierarchy: plain white app surface, compact top chrome, s
 - Browser check on desktop and mobile widths
 - If deploying: VPS service status, loopback health check, listener check, and data path proof
 
+## Review Guidelines
+
+- Treat product drift as a blocking review concern when a change adds planning-dashboard behavior, accounts, chat, feeds, analytics dashboards, or social mechanics that do not serve the paste/share/vote/reveal job.
+- Treat public exposure of private links, SQLite data, env files, logs, or VPS internals as P0/P1.
+- Treat production listener changes away from `127.0.0.1` as P0 unless explicitly requested.
+- Treat missing `npm test` and local smoke evidence as a review gap for behavioral changes.
+- Treat missing browser evidence as a review gap for UI changes.
+- Treat missing VPS service, health, listener, and data-path evidence as a review gap for deployment changes.
+
 ## RepoPrompt Fleet Contract
 
 - Parent Codex owns the overall goal and orchestrates the RepoPrompt Orchestrator.
