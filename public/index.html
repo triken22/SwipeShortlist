@@ -23,7 +23,7 @@
               <h1>Summer hotels</h1>
               <p>private link</p>
             </div>
-            <span class="code-pill" data-code>FAMILY-27</span>
+            <button class="code-pill" type="button" data-code data-copy-link>FAMILY-27</button>
           </header>
 
           <div class="content content-create">
@@ -47,6 +47,7 @@
                 class="link-input is-hidden"
                 data-link-input
                 rows="3"
+                aria-label="Paste travel, hotel, restaurant, or product links"
                 spellcheck="false"
                 placeholder="Paste links here"
               ></textarea>
@@ -98,7 +99,7 @@
           <header class="topbar vote-header">
             <h1 id="vote-title" data-title>Summer hotels</h1>
             <span class="progress">8 / 21</span>
-            <span class="code-pill" data-code>FAMILY-27</span>
+            <button class="code-pill" type="button" data-code data-copy-link>FAMILY-27</button>
           </header>
 
           <div class="content content-vote">
@@ -110,6 +111,11 @@
 
             <section class="card-stack" aria-label="Current option">
               <article class="vote-card" data-current-card></article>
+              <div class="swipe-cue" aria-hidden="true">
+                <span>← no</span>
+                <span>swipe or tap</span>
+                <span>yes →</span>
+              </div>
             </section>
           </div>
 
@@ -138,7 +144,10 @@
                 <span>like</span>
               </button>
             </div>
-            <p data-vote-status aria-live="polite">Undo appears after each vote</p>
+            <div class="vote-feedback">
+              <p data-vote-status aria-live="polite">Swipe the card or tap a choice.</p>
+              <button class="undo-button is-hidden" type="button" data-undo-vote>Undo</button>
+            </div>
           </footer>
         </article>
 
@@ -149,9 +158,9 @@
             </button>
             <div>
               <h1 data-title>Summer hotels</h1>
-              <p>Voting complete</p>
+              <p data-result-topbar>Voting complete</p>
             </div>
-            <span class="code-pill" data-code>FAMILY-27</span>
+            <button class="code-pill" type="button" data-code data-copy-link>FAMILY-27</button>
           </header>
 
           <div class="content content-result">
@@ -161,7 +170,7 @@
                 Voting complete
               </p>
               <h2 id="result-title" data-result-heading>Mare Blu Suites wins</h2>
-              <span>Everyone can live with this pick. Send it and stop the thread.</span>
+              <span data-result-subheading>Everyone can live with this pick. Send it and stop the thread.</span>
             </section>
 
             <section class="winner-card" data-winner-card aria-label="Winning option"></section>

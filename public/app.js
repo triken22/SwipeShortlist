@@ -3,6 +3,9 @@ const state = {
   results: null,
   currentIndex: 0,
   votedCardIds: new Set(),
+  isVoting: false,
+  lastVote: null,
+  drag: null,
   routeScreen: "create"
 };
 
@@ -54,12 +57,19 @@ function wireControls() {
       input.value = text || "";
       input.classList.remove("is-hidden");
       const count = extractLinks(input.value).length;
+      renderPreview();
       setStatus(count ? `${count} links pasted. Create the voting link when ready.` : "Clipboard did not contain links.");
     } catch {
       input.classList.remove("is-hidden");
       input.focus();
       setStatus("Paste links into the box, then create the voting link.");
     }
+  });
+
+  $("[data-link-input]")?.addEventListener("input", () => {
+    renderPreview();
+    const count = linksFromInput().length;
+    if (count) setStatus(`${count} links ready to import.`);
   });
 
   $("[data-focus-links]")?.addEventListener("click", () => {
@@ -86,6 +96,9 @@ function wireControls() {
         renderAll();
         setStatus(links.length ? `Imported ${links.length} links. Private link ready: ${shareUrl()}` : `Demo link ready: ${shareUrl()}`);
         location.hash = routeHash("vote");
+      } catch (error) {
+        console.error(error);
+        setStatus("Could not create the link. Check the pasted URLs and try again.");
       } finally {
         button.disabled = false;
       }
@@ -94,27 +107,21 @@ function wireControls() {
 
   $$("[data-vote]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const card = currentCard();
-      if (!card || !state.shortlist) return;
-      button.disabled = true;
-      try {
-        state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/votes`, {
-          method: "POST",
-          body: JSON.stringify({
-            cardId: card.id,
-            voterName: "You",
-            vote: button.dataset.vote
-          })
-        });
-        state.votedCardIds.add(card.id);
-        saveLocalVotes();
-        $("[data-vote-status]").textContent = `${voteLabel(button.dataset.vote)} saved for ${card.title}`;
-        advanceCard();
-      } finally {
-        button.disabled = false;
-      }
+      await castVote(button.dataset.vote);
     });
   });
+
+  $("[data-undo-vote]")?.addEventListener("click", undoLastVote);
+
+  $$("[data-copy-link]").forEach((button) => {
+    button.addEventListener("click", copyShareLink);
+  });
+
+  const card = $("[data-current-card]");
+  card?.addEventListener("pointerdown", handleCardPointerDown);
+  card?.addEventListener("pointermove", handleCardPointerMove);
+  card?.addEventListener("pointerup", handleCardPointerUp);
+  card?.addEventListener("pointercancel", resetDrag);
 
   $$("[data-screen-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -132,7 +139,12 @@ function wireControls() {
       location.hash = routeHash("vote");
       return;
     }
-    const winner = state.results?.winner || (await loadResults()).winner;
+    const loaded = state.results?.winner ? state.results : await loadResults();
+    if (loaded?.locked || !loaded?.winner) {
+      renderLockedResults();
+      return;
+    }
+    const winner = loaded.winner;
     const text = `${winner.title} is the final pick: ${winner.sourceUrl}`;
     try {
       await navigator.clipboard?.writeText(text);
@@ -159,11 +171,17 @@ function renderAll() {
 
 function renderPreview() {
   const list = $("[data-preview-list]");
-  $("[data-found-count]").textContent = `${state.shortlist.cards.length} cards ready enough to vote`;
-  $("[data-found-note]").textContent = state.shortlist.cards.some((card) => card.priceLabel === "Price to verify")
-    ? "Imported links need facts checked before booking."
-    : "3 cards need details checked later.";
-  list.innerHTML = state.shortlist.cards
+  const importedLinks = linksFromInput();
+  const cards = importedLinks.length ? previewCardsFromLinks(importedLinks) : state.shortlist.cards;
+  $("[data-found-count]").textContent = importedLinks.length
+    ? `${cards.length} pasted links ready to become cards`
+    : `${state.shortlist.cards.length} cards ready enough to vote`;
+  $("[data-found-note]").textContent = importedLinks.length
+    ? "We will keep prices unverified until the source is checked."
+    : state.shortlist.cards.some((card) => card.priceLabel === "Price to verify")
+      ? "Imported links need facts checked before booking."
+      : "Demo cards need details checked later.";
+  list.innerHTML = cards
     .slice(0, 3)
     .map(
       (card) => `
@@ -191,7 +209,8 @@ function renderVoters() {
 function renderVoteContext() {
   const node = $("[data-vote-context]");
   if (hasVotedLocally()) {
-    node.textContent = `${state.shortlist.votedCount} people have voted · aim for 21:00`;
+    const votedCount = Math.max(Number(state.shortlist.votedCount || 0), 1);
+    node.textContent = `${votedCount} ${votedCount === 1 ? "person has" : "people have"} voted · aim for 21:00`;
   } else {
     node.textContent = "Private until you choose · aim for 21:00";
   }
@@ -201,6 +220,7 @@ function renderVoteContext() {
 function renderCurrentCard() {
   const card = currentCard();
   const target = $("[data-current-card]");
+  resetDrag();
   if (!card) {
     target.innerHTML = `
       <div class="card-body">
@@ -247,9 +267,23 @@ async function renderResults() {
   }
   const winner = state.results?.winner;
   if (!winner) return;
+  const voteMarkup = winner.votes?.length
+    ? `<div class="voter-result-row">${winner.votes
+        .map(
+          (vote) => `
+            <span class="voter-result">
+              <span class="avatar">${escapeHtml(vote.voter?.initials || "?")}</span>
+              <span><strong>${escapeHtml(vote.voter?.name || "Voter")}</strong><em>${escapeHtml(voteLabel(vote.vote))}</em></span>
+            </span>
+          `
+        )
+        .join("")}</div>`
+    : "";
 
   $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg> Voting complete`;
+  $("[data-result-topbar]").textContent = "Voting complete";
   $("[data-result-heading]").textContent = `${winner.title} wins`;
+  $("[data-result-subheading]").textContent = "Everyone can live with this pick. Send it and stop the thread.";
   $("[data-send-final]").innerHTML = `Send final pick <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" /></svg>`;
   $("[data-winner-card]").innerHTML = `
     <img src="${escapeAttr(winner.imagePath)}" alt="" />
@@ -261,6 +295,7 @@ async function renderResults() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
         ${escapeHtml(winner.location)}
       </span>
+      ${voteMarkup}
       <div class="score-row">
         <span class="score"><strong>${winner.yesCount}</strong><span>yes</span></span>
         <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
@@ -283,6 +318,79 @@ function currentCard() {
   return state.shortlist?.cards[state.currentIndex] || null;
 }
 
+async function castVote(vote) {
+  const card = currentCard();
+  if (!card || !state.shortlist || state.isVoting) return;
+  state.isVoting = true;
+  setVoteControlsDisabled(true);
+  try {
+    state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/votes`, {
+      method: "POST",
+      body: JSON.stringify({
+        cardId: card.id,
+        voterName: "You",
+        vote
+      })
+    });
+    state.lastVote = { cardId: card.id, cardTitle: card.title, index: state.currentIndex, vote };
+    state.votedCardIds.add(card.id);
+    saveLocalVotes();
+    $("[data-vote-status]").textContent = `${voteLabel(vote)} saved for ${card.title}`;
+    showUndo();
+    advanceCard();
+  } catch (error) {
+    console.error(error);
+    $("[data-vote-status]").textContent = "Vote was not saved. Try again.";
+  } finally {
+    state.isVoting = false;
+    setVoteControlsDisabled(false);
+  }
+}
+
+async function undoLastVote() {
+  if (!state.lastVote || !state.shortlist || state.isVoting) return;
+  state.isVoting = true;
+  setVoteControlsDisabled(true);
+  try {
+    const undone = state.lastVote;
+    state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/votes`, {
+      method: "DELETE",
+      body: JSON.stringify({
+        cardId: undone.cardId,
+        voterName: "You"
+      })
+    });
+    state.votedCardIds.delete(undone.cardId);
+    state.currentIndex = undone.index;
+    state.lastVote = null;
+    saveLocalVotes();
+    hideUndo();
+    $("[data-vote-status]").textContent = `Removed your vote for ${undone.cardTitle}.`;
+    renderVoteContext();
+    renderCurrentCard();
+  } catch (error) {
+    console.error(error);
+    $("[data-vote-status]").textContent = "Could not undo that vote.";
+  } finally {
+    state.isVoting = false;
+    setVoteControlsDisabled(false);
+  }
+}
+
+function setVoteControlsDisabled(disabled) {
+  $$("[data-vote], [data-undo-vote]").forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
+function showUndo() {
+  $("[data-undo-vote]")?.classList.remove("is-hidden");
+}
+
+function hideUndo() {
+  $("[data-undo-vote]")?.classList.add("is-hidden");
+}
+
 function advanceCard() {
   state.currentIndex += 1;
   if (state.currentIndex >= state.shortlist.cards.length) {
@@ -295,6 +403,53 @@ function advanceCard() {
   }
   renderVoteContext();
   renderCurrentCard();
+}
+
+function handleCardPointerDown(event) {
+  if (!currentCard() || state.isVoting) return;
+  state.drag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    dx: 0,
+    dy: 0
+  };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+  event.currentTarget.classList.add("is-dragging");
+}
+
+function handleCardPointerMove(event) {
+  if (!state.drag || state.drag.pointerId !== event.pointerId) return;
+  const dx = event.clientX - state.drag.startX;
+  const dy = event.clientY - state.drag.startY;
+  state.drag.dx = dx;
+  state.drag.dy = dy;
+  const rotation = Math.max(-9, Math.min(9, dx / 18));
+  const target = event.currentTarget;
+  target.style.transform = `translate(${dx}px, ${dy * 0.25}px) rotate(${rotation}deg)`;
+  target.dataset.swipeIntent = Math.abs(dx) > 42 ? (dx > 0 ? "yes" : "no") : Math.abs(dy) > 56 && dy < 0 ? "hold" : "";
+}
+
+async function handleCardPointerUp(event) {
+  if (!state.drag || state.drag.pointerId !== event.pointerId) return;
+  const { dx, dy } = state.drag;
+  resetDrag();
+  if (Math.abs(dx) > 86) {
+    await castVote(dx > 0 ? "yes" : "no");
+    return;
+  }
+  if (dy < -96) {
+    await castVote("hold");
+  }
+}
+
+function resetDrag() {
+  const target = $("[data-current-card]");
+  state.drag = null;
+  if (!target) return;
+  target.classList.remove("is-dragging");
+  target.style.transform = "";
+  target.dataset.swipeIntent = "";
 }
 
 async function handleRoute() {
@@ -320,7 +475,12 @@ function showScreen(name) {
   $$("[data-screen]").forEach((screen) => {
     screen.classList.toggle("is-active", screen.dataset.screen === next);
   });
-  if (next === "result") renderResults();
+  if (next === "result") {
+    renderResults().catch((error) => {
+      console.error(error);
+      renderLockedResults();
+    });
+  }
 }
 
 async function api(path, options = {}) {
@@ -348,7 +508,10 @@ function shareUrl() {
 }
 
 function voteLabel(vote) {
-  return vote === "no" ? "No" : vote === "hold" ? "Hold" : "Yes";
+  if (vote === "no") return "No";
+  if (vote === "hold") return "Hold";
+  if (vote === "strong_yes") return "Strong yes";
+  return "Yes";
 }
 
 function linksFromInput() {
@@ -359,9 +522,60 @@ function extractLinks(text) {
   return Array.from(new Set((text.match(/https?:\/\/[^\s<>"']+/g) || []).map((url) => url.replace(/[),.;]+$/g, ""))));
 }
 
+async function copyShareLink() {
+  if (!state.shortlist) return;
+  const text = shareUrl();
+  try {
+    await navigator.clipboard?.writeText(text);
+    setStatus(`Voting link copied: ${text}`);
+  } catch {
+    setStatus(text);
+  }
+}
+
+function previewCardsFromLinks(links) {
+  return links.map((link) => {
+    try {
+      const url = new URL(link);
+      return {
+        title: titleFromUrl(url),
+        sourceDomain: sourceDomain(url),
+        location: "Open source link",
+        priceLabel: "Price to verify",
+        imagePath: "/assets/beach-thumb.png"
+      };
+    } catch {
+      return {
+        title: "Invalid link",
+        sourceDomain: "Check URL",
+        location: "Paste a full https:// link",
+        priceLabel: "Not imported",
+        imagePath: "/assets/mare-thumb.png"
+      };
+    }
+  });
+}
+
+function sourceDomain(url) {
+  return url.hostname.replace(/^www\./, "");
+}
+
+function titleFromUrl(url) {
+  const pathBits = url.pathname
+    .split("/")
+    .filter(Boolean)
+    .map((part) => part.replace(/\.[a-z0-9]+$/i, ""))
+    .filter(Boolean);
+  const raw = pathBits.at(-1) || sourceDomain(url);
+  const title = raw.replace(/[-_+]+/g, " ").replace(/\s+/g, " ").trim();
+  return title ? title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72) : "Imported link";
+}
+
 function renderLockedResults() {
   $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Private result`;
+  $("[data-result-topbar]").textContent = "Private result";
   $("[data-result-heading]").textContent = "Vote first, then see the winner";
+  $("[data-result-subheading]").textContent = "Your choice stays private and unlocks the group answer.";
   $("[data-send-final]").innerHTML = `Vote first <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
   $("[data-winner-card]").innerHTML = `
     <div class="winner-body">

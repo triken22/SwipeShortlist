@@ -127,7 +127,9 @@ const sampleCards = [...baseSampleCards, ...extraSampleCards];
 
 export function createShortlist({ title = "Summer hotels", participants = ["You", "Anna", "Tom", "Mia"], deadlineLabel = "Aim to decide by 21:00", links = [] } = {}) {
   const code = nextCode();
-  const cardsToCreate = cardsFromLinks(links);
+  const normalizedLinks = normalizeLinks(links);
+  const cardsToCreate = cardsFromLinks(normalizedLinks);
+  const shouldSeedDemoVotes = normalizedLinks.length === 0;
   const insertShortlist = db.prepare("INSERT INTO shortlists (code, title, deadline_label) VALUES (?, ?, ?)");
   const insertCard = db.prepare(`
     INSERT INTO cards (
@@ -167,10 +169,12 @@ export function createShortlist({ title = "Summer hotels", participants = ["You"
       return { id: Number(result.lastInsertRowid), name };
     });
 
-    const firstCard = cardIds[0];
-    voterIds
-      .filter((voter) => voter.name !== "You")
-      .forEach((voter) => insertVote.run(shortlistId, firstCard, voter.id, voter.name === "Mia" ? "strong_yes" : "yes"));
+    if (shouldSeedDemoVotes) {
+      const firstCard = cardIds[0];
+      voterIds
+        .filter((voter) => voter.name !== "You")
+        .forEach((voter) => insertVote.run(shortlistId, firstCard, voter.id, voter.name === "Mia" ? "strong_yes" : "yes"));
+    }
 
     db.exec("COMMIT");
     return getShortlist(code, { includeVotes: false });
@@ -224,6 +228,22 @@ export function recordVote({ code, cardId, voterName = "You", vote }) {
   return getResults(code);
 }
 
+export function deleteVote({ code, cardId, voterName = "You" }) {
+  const shortlist = db.prepare("SELECT * FROM shortlists WHERE code = ?").get(code);
+  if (!shortlist) return null;
+
+  const voter = db
+    .prepare("SELECT * FROM voters WHERE shortlist_id = ? AND lower(name) = lower(?)")
+    .get(shortlist.id, voterName);
+  if (!voter) throw new Error("Unknown voter");
+
+  const card = db.prepare("SELECT * FROM cards WHERE shortlist_id = ? AND id = ?").get(shortlist.id, cardId);
+  if (!card) throw new Error("Unknown card");
+
+  db.prepare("DELETE FROM votes WHERE shortlist_id = ? AND card_id = ? AND voter_id = ?").run(shortlist.id, cardId, voter.id);
+  return getResults(code);
+}
+
 export function hasVoterVoted(code, voterName = "You") {
   if (!voterName) return false;
   const row = db
@@ -254,15 +274,17 @@ export function getResults(code) {
     .map((card) => {
       const cardVotes = votesByCard.get(card.id) || [];
       const yesCount = cardVotes.filter((vote) => vote.vote === "yes" || vote.vote === "strong_yes").length;
+      const strongYesCount = cardVotes.filter((vote) => vote.vote === "strong_yes").length;
       const holdCount = cardVotes.filter((vote) => vote.vote === "hold").length;
       const noCount = cardVotes.filter((vote) => vote.vote === "no").length;
       return {
         ...card,
         votes: cardVotes,
         yesCount,
+        strongYesCount,
         holdCount,
         noCount,
-        score: yesCount * 2 + holdCount - noCount * 3
+        score: yesCount * 2 + strongYesCount + holdCount - noCount * 3
       };
     })
     .sort((a, b) => b.score - a.score || a.sortOrder - b.sortOrder);
@@ -284,14 +306,24 @@ function nextCode() {
   return `FAMILY-${Date.now().toString(36).toUpperCase()}`;
 }
 
-function cardsFromLinks(links) {
-  const parsedLinks = Array.isArray(links)
+function normalizeLinks(links) {
+  const rawLinks = Array.isArray(links)
     ? links
     : String(links || "")
         .split(/\s+/)
         .filter(Boolean);
 
-  const cards = parsedLinks
+  return Array.from(
+    new Set(
+      rawLinks
+        .map((link) => String(link || "").trim().replace(/[),.;]+$/g, ""))
+        .filter(Boolean)
+    )
+  );
+}
+
+function cardsFromLinks(links) {
+  const cards = links
     .map((link, index) => {
       try {
         const url = new URL(link);
