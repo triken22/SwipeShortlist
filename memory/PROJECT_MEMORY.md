@@ -20,6 +20,14 @@ The project is SwipeShortlist: a private, Tinder-like group decision closer for 
 - Frontend: static HTML/CSS/JS served by the backend.
 - Private VPS origin: `127.0.0.1:8092`.
 
+## Agent Operating Model
+
+- Parent Codex is the goal owner and meta-orchestrator.
+- RepoPrompt Orchestrator is an execution agent, not the final authority.
+- Critic is read-only and should only surface failure modes with evidence.
+- Max iterations stay capped at 5 per run.
+- Final closure requires parent Codex to verify PR, browser, tests, smoke, and VPS status.
+
 ## Deployment Memory
 
 Follow the existing private app pattern:

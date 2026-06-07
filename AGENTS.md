@@ -38,7 +38,9 @@ Match the screenshots' hierarchy: plain white app surface, compact top chrome, s
 
 ## RepoPrompt Fleet Contract
 
+- Parent Codex owns the overall goal and orchestrates the RepoPrompt Orchestrator.
 - One Orchestrator agent may edit and coordinate implementation.
 - One Critic agent is read-only and only looks for failure modes.
 - Max iterations: 5. Stop and report rather than looping.
 - PR must describe what was built, what was verified, and what remains.
+- Do not treat an Orchestrator completion message as final closure until parent Codex verifies browser evidence, repo/PR state, and VPS status.
