@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - "fix/**"
+      - "docs/**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run smoke test
+        env:
+          HOST: 127.0.0.1
+          PORT: 8092
+          SWIPE_DB_PATH: ${{ runner.temp }}/swipe-shortlist.sqlite
+        run: |
+          set -euo pipefail
+          npm start > "$RUNNER_TEMP/swipe-shortlist.log" 2>&1 &
+          server_pid="$!"
+          trap 'kill "$server_pid" 2>/dev/null || true; cat "$RUNNER_TEMP/swipe-shortlist.log"' EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8092/health; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:8092/health
+          npm run smoke

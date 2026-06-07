@@ -1,0 +1,16 @@
+[Unit]
+Description=SwipeShortlist public Cloudflare quick tunnel
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/
+After=network-online.target swipe-shortlist.service
+Wants=network-online.target
+Requires=swipe-shortlist.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --loglevel info --metrics 127.0.0.1:60124 --url http://127.0.0.1:8092
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
