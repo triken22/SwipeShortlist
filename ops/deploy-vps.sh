@@ -47,6 +47,7 @@ PATH=/opt/codex/node-v24/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/
 SWIPE_DATA_DIR=/srv/codex/apps/swipe-shortlist/data
 SWIPE_DB_PATH=/srv/codex/apps/swipe-shortlist/data/swipe-shortlist.sqlite
 ENV
+chown -R root:root '$REMOTE_REPO' '$REMOTE_DATA'
 cp '$REMOTE_REPO/ops/swipe-shortlist.service' /etc/systemd/system/swipe-shortlist.service
 systemctl daemon-reload
 systemctl enable --now swipe-shortlist.service
