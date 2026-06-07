@@ -11,7 +11,8 @@
   --red: #b33b32;
   --red-soft: #fff0ee;
   --radius: 8px;
-  --shadow: 0 18px 52px rgba(31, 27, 21, 0.12);
+  --shadow: 0 16px 42px rgba(31, 27, 21, 0.1);
+  --shadow-strong: 0 22px 62px rgba(31, 27, 21, 0.16);
   --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -27,7 +28,7 @@ body {
 body {
   margin: 0;
   color: var(--ink);
-  background: #fff;
+  background: #fbfaf8;
   font-family: var(--font);
   letter-spacing: 0;
 }
@@ -53,7 +54,7 @@ a:focus-visible {
   min-height: 100vh;
   place-items: center;
   padding: 0;
-  background: #fff;
+  background: #fbfaf8;
 }
 
 .phone {
@@ -81,8 +82,8 @@ a:focus-visible {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 64px;
-  padding: 8px 18px;
+  min-height: 68px;
+  padding: 9px 18px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(16px);
@@ -96,7 +97,7 @@ a:focus-visible {
 .topbar h1 {
   margin: 0;
   overflow: hidden;
-  font-size: 1.2rem;
+  font-size: 1.28rem;
   font-weight: 820;
   line-height: 1.08;
   text-align: center;
@@ -154,10 +155,19 @@ svg {
   white-space: nowrap;
 }
 
+button.code-pill {
+  cursor: pointer;
+}
+
+button.code-pill:hover {
+  border-color: var(--line-strong);
+  background: #fff;
+}
+
 .content {
   min-height: 0;
   overflow-y: auto;
-  padding: 24px 24px 18px;
+  padding: 28px 24px 20px;
 }
 
 .content-create {
@@ -167,7 +177,7 @@ svg {
 .hero-copy h2,
 .result-hero h2 {
   margin: 0;
-  font-size: clamp(2.25rem, 10.6vw, 3.35rem);
+  font-size: clamp(2.35rem, 10.8vw, 3.55rem);
   font-weight: 850;
   letter-spacing: 0;
   line-height: 0.98;
@@ -185,7 +195,7 @@ svg {
   display: grid;
   gap: 12px;
   margin: 26px 0 18px;
-  padding: 24px 18px;
+  padding: 28px 18px;
   border: 1.5px dashed #b9b7b2;
   border-radius: var(--radius);
   background: #fff;
@@ -210,6 +220,11 @@ svg {
   background: #111;
   font-size: 1.04rem;
   font-weight: 820;
+}
+
+.paste-action:hover,
+.primary-action:hover {
+  background: #000;
 }
 
 .paste-action span {
@@ -271,13 +286,14 @@ svg {
 
 .found-summary {
   display: grid;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
 
 .found-summary strong {
-  font-size: 1.02rem;
+  font-size: 1.04rem;
   line-height: 1.16;
 }
 
@@ -292,11 +308,18 @@ svg {
 
 .preview-row {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
+  grid-template-columns: 82px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 13px 0;
   border-bottom: 1px solid var(--line);
+}
+
+.preview-row::after {
+  content: "›";
+  color: #2f2b27;
+  font-size: 1.75rem;
+  line-height: 1;
 }
 
 .preview-row:last-child {
@@ -408,8 +431,8 @@ svg {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 5px 12px;
   align-items: center;
-  margin-bottom: 18px;
-  padding: 14px;
+  margin: -4px -2px 22px;
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--soft);
@@ -434,7 +457,8 @@ svg {
 
 .card-stack {
   position: relative;
-  min-height: 530px;
+  min-height: 548px;
+  padding-bottom: 26px;
 }
 
 .card-stack::before,
@@ -464,17 +488,64 @@ svg {
   position: relative;
   z-index: 1;
   overflow: hidden;
-  min-height: 510px;
+  min-height: 516px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   background: #fff;
-  box-shadow: 0 22px 64px rgba(31, 27, 21, 0.16);
+  box-shadow: var(--shadow-strong);
+  touch-action: pan-y;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+  user-select: none;
+}
+
+.vote-card.is-dragging {
+  cursor: grabbing;
+  transition: none;
+}
+
+.vote-card::before {
+  position: absolute;
+  top: 18px;
+  z-index: 2;
+  display: none;
+  padding: 8px 12px;
+  border: 2px solid currentColor;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.86);
+  font-size: 0.9rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.vote-card[data-swipe-intent="yes"]::before {
+  right: 18px;
+  display: block;
+  color: var(--green);
+  content: "Yes";
+}
+
+.vote-card[data-swipe-intent="no"]::before {
+  left: 18px;
+  display: block;
+  color: var(--red);
+  content: "No";
+}
+
+.vote-card[data-swipe-intent="hold"]::before {
+  left: 50%;
+  display: block;
+  color: var(--amber);
+  content: "Hold";
+  transform: translateX(-50%);
 }
 
 .vote-card img {
   display: block;
   width: 100%;
-  height: 252px;
+  height: 260px;
   object-fit: cover;
 }
 
@@ -493,7 +564,7 @@ svg {
 
 .card-body h2 {
   margin: 0;
-  font-size: 1.8rem;
+  font-size: 1.9rem;
   font-weight: 850;
   letter-spacing: 0;
   line-height: 1;
@@ -537,6 +608,19 @@ svg {
   color: var(--muted);
   font-size: 0.83rem;
   line-height: 1.22;
+}
+
+.swipe-cue {
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  display: flex;
+  justify-content: space-between;
+  color: #85817a;
+  font-size: 0.75rem;
+  font-weight: 760;
+  text-transform: uppercase;
 }
 
 .bottom-bar {
@@ -586,17 +670,21 @@ svg {
 .action-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .vote-button {
   display: grid;
-  min-height: 82px;
+  min-height: 94px;
   place-items: center;
   padding: 10px 8px;
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--line);
   border-radius: var(--radius);
   background: #fff;
+}
+
+.vote-button:hover {
+  border-color: currentColor;
 }
 
 .vote-button strong {
@@ -612,6 +700,33 @@ svg {
 .vote-button.is-no {
   color: var(--red);
   background: var(--red-soft);
+}
+
+.vote-feedback {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.vote-feedback p {
+  justify-content: start;
+  text-align: left;
+}
+
+.undo-button {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: #2f2b27;
+  background: #fff;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.undo-button:hover {
+  border-color: var(--line-strong);
 }
 
 .vote-button.is-hold {
@@ -634,11 +749,13 @@ svg {
   display: grid;
   gap: 10px;
   padding-top: 2px;
+  text-align: center;
 }
 
 .result-hero p {
   display: inline-flex;
   align-items: center;
+  justify-self: center;
   gap: 8px;
   margin: 0;
   color: var(--green);
@@ -662,6 +779,40 @@ svg {
   display: grid;
   gap: 10px;
   padding: 16px;
+}
+
+.voter-result-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.voter-result {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.voter-result > span:last-child {
+  display: grid;
+  min-width: 0;
+}
+
+.voter-result strong {
+  overflow: hidden;
+  font-size: 0.86rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voter-result em {
+  color: var(--green);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 780;
 }
 
 .winner-body h3 {
@@ -714,7 +865,7 @@ svg {
 
 @media (min-width: 760px) {
   .shell {
-    background: linear-gradient(180deg, #faf9f7 0%, #fff 100%);
+    background: #f7f5f1;
     padding: 28px;
   }
 
@@ -747,5 +898,13 @@ svg {
 
   .vote-card {
     min-height: 486px;
+  }
+
+  .action-grid {
+    gap: 8px;
+  }
+
+  .vote-button {
+    min-height: 84px;
   }
 }

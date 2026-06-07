@@ -1,7 +1,7 @@
 import { createReadStream, existsSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { createServer } from "node:http";
-import { createShortlist, getResults, getShortlist, hasVoterVoted, migrate, recordVote } from "./db.js";
+import { createShortlist, deleteVote, getResults, getShortlist, hasVoterVoted, migrate, recordVote } from "./db.js";
 
 const ROOT = resolve(process.cwd());
 const PUBLIC_DIR = resolve(ROOT, "public");
@@ -52,12 +52,23 @@ const server = createServer(async (req, res) => {
       return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
     }
 
+    if (req.method === "DELETE" && voteMatch) {
+      const body = await readJson(req);
+      if (body.error) return json(res, 400, { error: body.error });
+      const results = deleteVote({
+        code: decodeURIComponent(voteMatch[1]),
+        cardId: Number(body.cardId),
+        voterName: body.voterName || "You"
+      });
+      return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
+    }
+
     const resultMatch = url.pathname.match(/^\/api\/shortlists\/([^/]+)\/results$/);
     if (req.method === "GET" && resultMatch) {
       const code = decodeURIComponent(resultMatch[1]);
       const voterName = url.searchParams.get("voterName") || "";
       if (!hasVoterVoted(code, voterName)) {
-        return json(res, 403, { error: "Vote before results" });
+        return json(res, 200, { locked: true, error: "Vote before results" });
       }
       const results = getResults(code);
       return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
@@ -119,11 +130,15 @@ function serveStatic(pathname, res, headOnly = false) {
 
   res.writeHead(200, {
     "content-type": contentType(filePath),
-    "cache-control": filePath.endsWith("index.html") ? "no-store" : "public, max-age=86400",
+    "cache-control": shouldCacheAsset(filePath) ? "public, max-age=86400" : "no-store",
     ...securityHeaders()
   });
   if (headOnly) return res.end();
   createReadStream(filePath).pipe(res);
+}
+
+function shouldCacheAsset(filePath) {
+  return !filePath.endsWith("index.html") && !filePath.endsWith(".js") && !filePath.endsWith(".css");
 }
 
 function securityHeaders() {

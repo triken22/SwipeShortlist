@@ -47,6 +47,37 @@ test("imports pasted links as votable cards without fake price certainty", async
     assert.equal(shortlist.cards[0].priceLabel, "Price to verify");
     assert.match(shortlist.cards[0].trustLabel, /verify before booking/);
     assert.match(shortlist.code, /^FAMILY-\d{6}$/);
+    assert.equal(dbModule.hasVoterVoted(shortlist.code, "You"), false);
+
+    const afterNo = dbModule.recordVote({
+      code: shortlist.code,
+      cardId: shortlist.cards[0].id,
+      voterName: "You",
+      vote: "no"
+    });
+    assert.equal(afterNo.winner.title, shortlist.cards[1].title);
+
+    const afterYes = dbModule.recordVote({
+      code: shortlist.code,
+      cardId: shortlist.cards[1].id,
+      voterName: "You",
+      vote: "yes"
+    });
+    assert.equal(afterYes.winner.title, shortlist.cards[1].title);
+
+    dbModule.deleteVote({
+      code: shortlist.code,
+      cardId: shortlist.cards[1].id,
+      voterName: "You"
+    });
+    assert.equal(dbModule.hasVoterVoted(shortlist.code, "You"), true);
+
+    dbModule.deleteVote({
+      code: shortlist.code,
+      cardId: shortlist.cards[0].id,
+      voterName: "You"
+    });
+    assert.equal(dbModule.hasVoterVoted(shortlist.code, "You"), false);
   } finally {
     dbModule.db.close();
     rmSync(temp, { recursive: true, force: true });
