@@ -2,11 +2,21 @@
   "name": "swipe-shortlist",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/triken22/SwipeShortlist.git"
+  },
+  "bugs": {
+    "url": "https://github.com/triken22/SwipeShortlist/issues"
+  },
+  "homepage": "https://github.com/triken22/SwipeShortlist#readme",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
     "dev": "NODE_ENV=development node src/server.js",
     "smoke": "node scripts/smoke-test.js",
+    "sync:status": "bash scripts/sync-status.sh",
     "test": "node --test tests/*.test.js"
   },
   "engines": {

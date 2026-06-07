@@ -9,6 +9,7 @@ REMOTE_REPO="/srv/codex/repos/${APP_NAME}"
 REMOTE_DATA="/srv/codex/apps/${APP_NAME}/data"
 REMOTE_ENV="/etc/codex/env.d/${APP_NAME}.env"
 REMOTE_NODE="/opt/codex/node-v24"
+ENABLE_PUBLIC_TUNNEL="${ENABLE_PUBLIC_TUNNEL:-0}"
 
 ssh -i "$SSH_KEY" "$VPS" "set -e
 mkdir -p '$REMOTE_REPO' '$REMOTE_DATA' /etc/codex/env.d /opt/codex
@@ -53,12 +54,32 @@ systemctl daemon-reload
 systemctl enable --now swipe-shortlist.service
 systemctl restart swipe-shortlist.service
 systemctl --no-pager --full status swipe-shortlist.service
+health_ok=0
 for attempt in \$(seq 1 20); do
   if health=\"\$(curl -fsS http://127.0.0.1:8092/health 2>/dev/null)\"; then
     printf '%s\n' \"\$health\"
-    exit 0
+    health_ok=1
+    break
   fi
   sleep 0.5
 done
+if [ \"\$health_ok\" != \"1\" ]; then
 journalctl -u swipe-shortlist.service -n 80 --no-pager
-exit 1"
+exit 1
+fi"
+
+if [ "$ENABLE_PUBLIC_TUNNEL" = "1" ]; then
+  ssh -i "$SSH_KEY" "$VPS" "set -e
+cp '$REMOTE_REPO/ops/swipe-shortlist-tunnel.service' /etc/systemd/system/swipe-shortlist-tunnel.service
+systemctl daemon-reload
+systemctl enable --now swipe-shortlist-tunnel.service
+sleep 8
+url=\"\$(journalctl -u swipe-shortlist-tunnel.service --no-pager | grep -Eo 'https://[a-z0-9-]+\\.trycloudflare\\.com' | tail -1 || true)\"
+if [ -n \"\$url\" ]; then
+  printf '%s\n' \"\$url\" > /srv/codex/apps/swipe-shortlist/public-url.txt
+  printf 'public_url=%s\n' \"\$url\"
+else
+  journalctl -u swipe-shortlist-tunnel.service -n 80 --no-pager
+  exit 1
+fi"
+fi

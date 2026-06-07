@@ -1,6 +1,12 @@
 # SwipeShortlist
 
+[![CI](https://github.com/triken22/SwipeShortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/triken22/SwipeShortlist/actions/workflows/ci.yml)
+
 SwipeShortlist turns messy group-chat links into one private voting flow and one final pick. It is intentionally simple: create a shortlist, share the private link, vote through cards with No/Hold/Yes, then send the winner.
+
+## Project Status
+
+SwipeShortlist is an early open-source app intended for private, self-hosted deployment. The current production shape is a dependency-light Node app with SQLite persistence, designed to run behind a loopback-only origin on a VPS.
 
 ## Run Locally
 
@@ -25,6 +31,7 @@ SWIPE_DB_PATH=/srv/codex/apps/swipe-shortlist/data/swipe-shortlist.sqlite
 npm test
 npm start
 npm run smoke
+npm run sync:status
 ```
 
 ## VPS Shape
@@ -38,3 +45,20 @@ The intended private deployment is:
 - origin: `127.0.0.1:8092`
 
 Keep the origin loopback-only. Use a Tailscale SSH tunnel or an approved Caddy/Cloudflare Tunnel route for access.
+
+For temporary public internet access without opening the app port, deploy with:
+
+```bash
+ENABLE_PUBLIC_TUNNEL=1 ./ops/deploy-vps.sh
+```
+
+This installs `swipe-shortlist-tunnel.service`, a Cloudflare quick tunnel that proxies to `127.0.0.1:8092`. The quick-tunnel URL is written on the VPS to `/srv/codex/apps/swipe-shortlist/public-url.txt`. For production, replace this with a named Cloudflare Tunnel or a dedicated Caddy hostname because quick-tunnel URLs can change after service restarts.
+
+## Project Management
+
+- `main` is the stable branch.
+- Work should happen on feature branches and be merged by pull request.
+- CI must pass before a pull request is merged.
+- Deployment changes should include local smoke-test evidence and VPS health evidence.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/agent-orchestration.md](docs/agent-orchestration.md).
