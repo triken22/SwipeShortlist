@@ -1,0 +1,171 @@
+name: Deploy VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy"
+        required: true
+        default: main
+      enable_public_tunnel:
+        description: "Start/update the temporary Cloudflare quick tunnel"
+        required: true
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swipe-shortlist-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run local smoke test
+        env:
+          HOST: 127.0.0.1
+          PORT: 8092
+          SWIPE_DB_PATH: ${{ runner.temp }}/swipe-shortlist.sqlite
+        run: |
+          set -euo pipefail
+          npm start > "$RUNNER_TEMP/swipe-shortlist.log" 2>&1 &
+          server_pid="$!"
+          trap 'kill "$server_pid" 2>/dev/null || true; cat "$RUNNER_TEMP/swipe-shortlist.log"' EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8092/health; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:8092/health
+          npm run smoke
+
+  deploy:
+    name: deploy
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' || vars.AUTO_DEPLOY_VPS == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production-vps
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+
+      - name: Validate deployment configuration
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$TS_OAUTH_CLIENT_ID" ] || missing+=("secrets.TS_OAUTH_CLIENT_ID")
+          [ -n "$TS_OAUTH_SECRET" ] || missing+=("secrets.TS_OAUTH_SECRET")
+          [ -n "$VPS_HOST" ] || missing+=("vars.VPS_HOST")
+          [ -n "$VPS_USER" ] || missing+=("vars.VPS_USER")
+          [ -n "$VPS_SSH_PRIVATE_KEY" ] || missing+=("secrets.VPS_SSH_PRIVATE_KEY")
+          [ -n "$VPS_SSH_KNOWN_HOSTS" ] || missing+=("secrets.VPS_SSH_KNOWN_HOSTS")
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing deployment configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: ${{ vars.TS_TAGS || 'tag:ci' }}
+          ping: ${{ vars.VPS_HOST }}
+
+      - name: Prepare SSH credentials
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/swipe-shortlist-deploy-key"
+          chmod 600 "$RUNNER_TEMP/swipe-shortlist-deploy-key"
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy to VPS
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          ENABLE_PUBLIC_TUNNEL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.enable_public_tunnel == 'true' && '1' || vars.ENABLE_PUBLIC_TUNNEL || '0' }}
+          SSH_KEY: ${{ runner.temp }}/swipe-shortlist-deploy-key
+          SSH_STRICT: "yes"
+          VPS: ${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          ./ops/deploy-vps.sh
+
+      - name: Verify remote service
+        id: remote_verify
+        env:
+          SSH_KEY: ${{ runner.temp }}/swipe-shortlist-deploy-key
+          VPS: ${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          remote_report="$(ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS" 'set -e
+            systemctl is-active swipe-shortlist.service
+            curl -fsS http://127.0.0.1:8092/health
+            ss -ltnp | grep "127.0.0.1:8092"
+            test -w /srv/codex/apps/swipe-shortlist/data
+            if [ -f /srv/codex/apps/swipe-shortlist/public-url.txt ]; then
+              printf "public_url=%s\n" "$(cat /srv/codex/apps/swipe-shortlist/public-url.txt)"
+            fi
+          ')"
+          printf '%s\n' "$remote_report"
+          public_url="$(printf '%s\n' "$remote_report" | awk -F= '/^public_url=/{print $2; exit}')"
+          if [ -n "$public_url" ]; then
+            echo "public_url=$public_url" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "### VPS deploy"
+            echo
+            echo "- Ref: \`${GITHUB_SHA}\`"
+            echo "- Service: \`swipe-shortlist.service\`"
+            echo "- Origin: \`127.0.0.1:8092\`"
+            if [ -n "$public_url" ]; then
+              echo "- Public URL: $public_url"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
