@@ -54,7 +54,8 @@ systemctl enable --now swipe-shortlist.service
 systemctl restart swipe-shortlist.service
 systemctl --no-pager --full status swipe-shortlist.service
 for attempt in \$(seq 1 20); do
-  if curl -fsS http://127.0.0.1:8092/health; then
+  if health=\"\$(curl -fsS http://127.0.0.1:8092/health 2>/dev/null)\"; then
+    printf '%s\n' \"\$health\"
     exit 0
   fi
   sleep 0.5
