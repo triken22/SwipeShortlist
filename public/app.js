@@ -285,6 +285,7 @@ async function renderResults() {
   $("[data-result-heading]").textContent = `${winner.title} wins`;
   $("[data-result-subheading]").textContent = "Everyone can live with this pick. Send it and stop the thread.";
   $("[data-send-final]").innerHTML = `Send final pick <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" /></svg>`;
+  $("[data-send-status]").textContent = "Ready to copy for the group chat.";
   $("[data-winner-card]").innerHTML = `
     <img src="${escapeAttr(winner.imagePath)}" alt="" />
     <div class="winner-body">
