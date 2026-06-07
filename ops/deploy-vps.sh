@@ -52,4 +52,11 @@ systemctl daemon-reload
 systemctl enable --now swipe-shortlist.service
 systemctl restart swipe-shortlist.service
 systemctl --no-pager --full status swipe-shortlist.service
-curl -fsS http://127.0.0.1:8092/health"
+for attempt in \$(seq 1 20); do
+  if curl -fsS http://127.0.0.1:8092/health; then
+    exit 0
+  fi
+  sleep 0.5
+done
+journalctl -u swipe-shortlist.service -n 80 --no-pager
+exit 1"
