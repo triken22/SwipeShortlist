@@ -1,0 +1,19 @@
+[Unit]
+Description=SwipeShortlist private app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/codex/repos/swipe-shortlist
+EnvironmentFile=/etc/codex/env.d/swipe-shortlist.env
+ExecStart=/usr/bin/env npm start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/srv/codex/apps/swipe-shortlist/data
+
+[Install]
+WantedBy=multi-user.target

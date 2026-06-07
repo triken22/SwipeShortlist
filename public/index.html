@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SwipeShortlist</title>
+    <meta
+      name="description"
+      content="Turn messy group-chat links into one private vote and one final pick."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell" aria-label="SwipeShortlist">
+      <section class="phone" data-app>
+        <article class="screen is-active" data-screen="create" aria-labelledby="create-title">
+          <header class="topbar">
+            <button class="icon-button" type="button" aria-label="Back">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" /></svg>
+            </button>
+            <div>
+              <h1>Summer hotels</h1>
+              <p>private link</p>
+            </div>
+            <span class="code-pill" data-code>FAMILY-27</span>
+          </header>
+
+          <div class="content content-create">
+            <section class="hero-copy">
+              <h2 id="create-title">Turn 21 chat links into one decision</h2>
+              <p>Paste the mess. Send one voting link. Stop chasing replies.</p>
+            </section>
+
+            <section class="paste-box" aria-label="Paste links">
+              <button class="paste-action" type="button" data-paste-clipboard>
+                <span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M10.5 13.5 13.5 10.5" />
+                    <path d="M8.5 15.5a4 4 0 0 1 0-5.7l1.8-1.8a4 4 0 0 1 5.7 0" />
+                    <path d="M15.5 8.5a4 4 0 0 1 0 5.7l-1.8 1.8a4 4 0 0 1-5.7 0" />
+                  </svg>
+                </span>
+                Paste from clipboard
+              </button>
+              <textarea
+                class="link-input is-hidden"
+                data-link-input
+                rows="3"
+                spellcheck="false"
+                placeholder="Paste links here"
+              ></textarea>
+              <button class="text-button" type="button" data-focus-links>
+                Add link manually
+              </button>
+            </section>
+
+            <section class="found-panel" aria-label="Imported links">
+              <div class="found-summary">
+                <strong data-found-count>3 cards ready enough to vote</strong>
+                <span data-found-note>Paste real links to replace the demo cards.</span>
+              </div>
+              <div class="preview-list" data-preview-list></div>
+            </section>
+
+            <section class="voter-panel" aria-labelledby="voters-title">
+              <h3 id="voters-title">Who should vote?</h3>
+              <div class="chip-row" data-voter-chips></div>
+              <button class="deadline" type="button" data-note="Aim set for today at 21:00">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="8" />
+                  <path d="M12 8v5l3 2" />
+                </svg>
+                Aim to decide by 21:00
+              </button>
+            </section>
+          </div>
+
+          <footer class="bottom-bar">
+            <button class="primary-action" type="button" data-create-shortlist>
+              Create voting link
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h14" />
+                <path d="m13 6 6 6-6 6" />
+              </svg>
+            </button>
+            <p aria-live="polite" data-status>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="6" y="10" width="12" height="9" rx="2" />
+                <path d="M8 10V8a4 4 0 0 1 8 0v2" />
+              </svg>
+              Private link. No app. No accounts.
+            </p>
+          </footer>
+        </article>
+
+        <article class="screen" data-screen="vote" aria-labelledby="vote-title">
+          <header class="topbar vote-header">
+            <h1 id="vote-title" data-title>Summer hotels</h1>
+            <span class="progress">8 / 21</span>
+            <span class="code-pill" data-code>FAMILY-27</span>
+          </header>
+
+          <div class="content content-vote">
+            <section class="private-row">
+              <strong>Your vote is private until you choose</strong>
+              <span data-vote-context>Private until you choose · aim for 21:00</span>
+              <div class="avatar-dots" data-avatar-dots aria-label="Participants"></div>
+            </section>
+
+            <section class="card-stack" aria-label="Current option">
+              <article class="vote-card" data-current-card></article>
+            </section>
+          </div>
+
+          <footer class="bottom-bar vote-actions">
+            <div class="action-grid" role="group" aria-label="Vote on current option">
+              <button class="vote-button is-no" type="button" data-vote="no">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 6l12 12" />
+                  <path d="M18 6 6 18" />
+                </svg>
+                <strong>No</strong>
+                <span>reject</span>
+              </button>
+              <button class="vote-button is-hold" type="button" data-vote="hold">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 4h10v16l-5-3-5 3V4Z" />
+                </svg>
+                <strong>Hold</strong>
+                <span>save for later</span>
+              </button>
+              <button class="vote-button is-yes" type="button" data-vote="yes">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m5 13 4 4L19 7" />
+                </svg>
+                <strong>Yes</strong>
+                <span>like</span>
+              </button>
+            </div>
+            <p data-vote-status aria-live="polite">Undo appears after each vote</p>
+          </footer>
+        </article>
+
+        <article class="screen" data-screen="result" aria-labelledby="result-title">
+          <header class="topbar">
+            <button class="icon-button" type="button" data-screen-target="vote" aria-label="Back to vote">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" /></svg>
+            </button>
+            <div>
+              <h1 data-title>Summer hotels</h1>
+              <p>Voting complete</p>
+            </div>
+            <span class="code-pill" data-code>FAMILY-27</span>
+          </header>
+
+          <div class="content content-result">
+            <section class="result-hero">
+              <p data-result-state>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
+                Voting complete
+              </p>
+              <h2 id="result-title" data-result-heading>Mare Blu Suites wins</h2>
+              <span>Everyone can live with this pick. Send it and stop the thread.</span>
+            </section>
+
+            <section class="winner-card" data-winner-card aria-label="Winning option"></section>
+            <button class="backup-row" type="button" data-backup-row data-note="Two backup matches are available">
+              Need backup options? 2 other matches
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+            </button>
+          </div>
+
+          <footer class="bottom-bar">
+            <button class="primary-action is-green" type="button" data-send-final>
+              Send final pick
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" />
+              </svg>
+            </button>
+            <p data-send-status aria-live="polite">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="6" y="10" width="12" height="9" rx="2" />
+                <path d="M8 10V8a4 4 0 0 1 8 0v2" />
+              </svg>
+              Results open after your vote
+            </p>
+          </footer>
+        </article>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -7,3 +7,5 @@ coverage/
 dist/
 playwright-report/
 test-results/
+.playwright-cli/
+.playwright-mcp/
