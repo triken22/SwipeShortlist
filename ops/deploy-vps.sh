@@ -27,7 +27,7 @@ if [ ! -x '$REMOTE_NODE/bin/node' ] || ! '$REMOTE_NODE/bin/node' -e 'process.exi
   rm -rf \"\$tmp\"
 fi
 '$REMOTE_NODE/bin/node' -e 'import(\"node:sqlite\").then(() => console.log(process.version))'"
-rsync -az --delete \
+rsync -az --delete --no-owner --no-group \
   --exclude '.git' \
   --exclude '.DS_Store' \
   --exclude '.playwright-cli' \
