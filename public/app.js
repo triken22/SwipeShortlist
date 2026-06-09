@@ -1,13 +1,40 @@
+import { linkContextForUrl } from "./link-context.js";
+
 const state = {
   shortlist: null,
   results: null,
+  draftCards: [],
   currentIndex: 0,
   votedCardIds: new Set(),
+  voterKey: "",
+  voterName: "You",
   isVoting: false,
   lastVote: null,
+  showShareFlow: false,
+  shareFlowCode: "",
   drag: null,
   routeScreen: "create"
 };
+
+const DEFAULT_TITLE = "Private shortlist";
+const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
+const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"]);
+const GENERIC_URL_PATH_PARTS = new Set([
+  "accommodation",
+  "accommodations",
+  "detail",
+  "details",
+  "hotel",
+  "hotels",
+  "listing",
+  "listings",
+  "property",
+  "properties",
+  "room",
+  "rooms",
+  "stay",
+  "stays",
+]);
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -20,22 +47,8 @@ init().catch((error) => {
 async function init() {
   wireControls();
   const initialRoute = parseRoute();
-  const savedCode = initialRoute.code || localStorage.getItem("swipe-shortlist-code");
-  if (savedCode) {
-    const existing = await api(`/api/shortlists/${encodeURIComponent(savedCode)}`, { allow404: true });
-    if (existing) {
-      state.shortlist = existing;
-      loadLocalVotes();
-    }
-  }
-
-  if (!state.shortlist) {
-    state.shortlist = await api("/api/shortlists", {
-      method: "POST",
-      body: JSON.stringify({})
-    });
-    localStorage.setItem("swipe-shortlist-code", state.shortlist.code);
-    loadLocalVotes();
+  if (initialRoute.code) {
+    await loadShortlist(initialRoute.code);
   }
 
   renderAll();
@@ -54,11 +67,17 @@ function wireControls() {
     const input = $("[data-link-input]");
     try {
       const text = await navigator.clipboard?.readText();
+      if (!text) {
+        setStatus("Clipboard was empty. Paste links into the box.");
+        return;
+      }
       input.value = text || "";
       input.classList.remove("is-hidden");
-      const count = extractLinks(input.value).length;
-      renderPreview();
-      setStatus(count ? `${count} links pasted. Create the voting link when ready.` : "Clipboard did not contain links.");
+      state.draftCards = parseMessyText(text);
+      renderReviewCards();
+      const count = state.draftCards.filter(isSubmittableDraftCard).length;
+      setStatus(count ? `${count} option${count !== 1 ? "s" : ""} extracted. Review and create the voting link.` : "Paste at least one full http or https link.");
+      scheduleMetadataEnrichment();
     } catch {
       input.classList.remove("is-hidden");
       input.focus();
@@ -67,9 +86,15 @@ function wireControls() {
   });
 
   $("[data-link-input]")?.addEventListener("input", () => {
-    renderPreview();
-    const count = linksFromInput().length;
-    if (count) setStatus(`${count} links ready to import.`);
+    state.draftCards = parseMessyText($("[data-link-input]")?.value || "");
+    renderReviewCards();
+    const count = state.draftCards.filter(isSubmittableDraftCard).length;
+    if (count) {
+      setStatus(`${count} option${count !== 1 ? "s" : ""} extracted. Review and create the voting link.`);
+    } else {
+      setStatus("Paste at least one full http or https link.");
+    }
+    scheduleMetadataEnrichment();
   });
 
   $("[data-focus-links]")?.addEventListener("click", () => {
@@ -78,29 +103,73 @@ function wireControls() {
     input?.focus();
   });
 
+  $("[data-review-list]")?.addEventListener("input", (event) => {
+    const target = event.target;
+    const index = Number(target.dataset?.cardIndex);
+    const field = target.dataset?.cardField;
+    if (isNaN(index) || !field || index >= state.draftCards.length) return;
+    state.draftCards[index]._userEditedFields = {
+      ...(state.draftCards[index]._userEditedFields || {}),
+      [field]: true
+    };
+    if (field === "facts") {
+      state.draftCards[index].facts = target.value.split("\n").map((f) => f.trim()).filter(Boolean);
+    } else {
+      state.draftCards[index][field] = target.value;
+      if (field === "title") state.draftCards[index]._userEdited = true;
+    }
+    updateCreateActions(state.draftCards.filter(isSubmittableDraftCard).length > 0);
+  });
+
+  $("[data-review-list]")?.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-remove-card]");
+    if (!remove) return;
+    const index = Number(remove.dataset.removeCard);
+    if (isNaN(index) || index >= state.draftCards.length) return;
+    state.draftCards.splice(index, 1);
+    refreshDraftDuplicateFlags();
+    renderReviewCards();
+    const remaining = state.draftCards.filter(isSubmittableDraftCard).length;
+    setStatus(remaining ? `Removed. ${remaining} option${remaining !== 1 ? "s" : ""} remaining.` : "No options left. Paste links to add more.");
+  });
+
   $$("[data-create-shortlist]").forEach((button) => {
     button.addEventListener("click", async () => {
+      const cards = draftCardsFromState();
+      if (!cards.length) {
+        const input = $("[data-link-input]");
+        input?.classList.remove("is-hidden");
+        input?.focus();
+        setStatus("Paste at least one valid http or https link first.");
+        renderReviewCards();
+        return;
+      }
+
       button.disabled = true;
       setStatus("Creating private voting link...");
       try {
-        const links = linksFromInput();
         state.shortlist = await api("/api/shortlists", {
           method: "POST",
-          body: JSON.stringify({ links })
+          body: JSON.stringify({ cards })
         });
+        state.draftCards = [];
         state.results = null;
         state.currentIndex = 0;
         state.votedCardIds.clear();
-        localStorage.setItem("swipe-shortlist-code", state.shortlist.code);
+        state.voterKey = getOrCreateVoterKey(state.shortlist.code);
+        state.voterName = loadVoterName(state.shortlist.code);
+        state.showShareFlow = true;
+        state.shareFlowCode = state.shortlist.code;
+        localStorage.setItem("swipe-shortlist-last-code", state.shortlist.code);
         saveLocalVotes();
         renderAll();
-        setStatus(links.length ? `Imported ${links.length} links. Private link ready: ${shareUrl()}` : `Demo link ready: ${shareUrl()}`);
+        setStatus(`Created with ${cards.length} option${cards.length !== 1 ? "s" : ""}. Private link ready: ${shareUrl()}`);
         location.hash = routeHash("vote");
       } catch (error) {
         console.error(error);
-        setStatus("Could not create the link. Check the pasted URLs and try again.");
+        setStatus(error.message.includes("400") ? "Paste at least one valid http or https link." : "Could not create the link. Try again.");
       } finally {
-        button.disabled = false;
+        renderReviewCards();
       }
     });
   });
@@ -117,11 +186,34 @@ function wireControls() {
     button.addEventListener("click", copyShareLink);
   });
 
+  $("[data-share-copy]")?.addEventListener("click", async () => {
+    await copyShareLink();
+    const btn = $("[data-share-copy]");
+    btn.textContent = "Copied";
+    setTimeout(() => {
+      btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg> Copy voting link`;
+    }, 2000);
+  });
+
+  $("[data-share-dismiss]")?.addEventListener("click", () => {
+    state.showShareFlow = false;
+    renderAll();
+    setStatus("Your voting link is ready. Share it from the code pill at the top.");
+  });
+
+  $("[data-voter-name]")?.addEventListener("input", (event) => {
+    if (!state.shortlist) return;
+    state.voterName = event.target.value.trim() || "You";
+    localStorage.setItem(voterNameStorageKey(state.shortlist.code), state.voterName);
+  });
+
   const card = $("[data-current-card]");
   card?.addEventListener("pointerdown", handleCardPointerDown);
   card?.addEventListener("pointermove", handleCardPointerMove);
   card?.addEventListener("pointerup", handleCardPointerUp);
   card?.addEventListener("pointercancel", resetDrag);
+  window.addEventListener("pointerup", handleCardPointerUp);
+  window.addEventListener("pointercancel", resetDrag);
 
   $$("[data-screen-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -134,21 +226,21 @@ function wireControls() {
   });
 
   $("[data-send-final]")?.addEventListener("click", async () => {
-    if (!hasVotedLocally()) {
-      $("[data-send-status]").textContent = "Vote first, then send the final pick.";
-      location.hash = routeHash("vote");
-      return;
-    }
     const loaded = state.results?.winner ? state.results : await loadResults();
     if (loaded?.locked || !loaded?.winner) {
+      location.hash = routeHash("vote");
       renderLockedResults();
       return;
     }
-    const winner = loaded.winner;
-    const text = `${winner.title} is the final pick: ${winner.sourceUrl}`;
+    const text = loaded.rationale?.copyText || `${loaded.winner.title} is the final pick: ${loaded.winner.sourceUrl}`;
     try {
       await navigator.clipboard?.writeText(text);
-      $("[data-send-status]").textContent = "Final pick copied for the group chat.";
+      const btn = $("[data-send-final]");
+      btn.innerHTML = `Copied <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>`;
+      setTimeout(() => {
+        btn.innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
+      }, 2000);
+      $("[data-send-status]").textContent = "Copied! Paste it into your group chat.";
     } catch {
       $("[data-send-status]").textContent = text;
     }
@@ -156,37 +248,40 @@ function wireControls() {
 }
 
 function renderAll() {
-  if (!state.shortlist) return;
   $$("[data-code]").forEach((node) => {
-    node.textContent = state.shortlist.code;
+    node.textContent = state.shortlist?.code || "New";
+    if (node.tagName === "BUTTON") node.disabled = !state.shortlist;
   });
   $$("[data-title]").forEach((node) => {
-    node.textContent = state.shortlist.title;
+    node.textContent = state.shortlist?.title || DEFAULT_TITLE;
   });
-  renderPreview();
+  renderIdentity();
+  renderReviewCards();
   renderVoters();
   renderVoteContext();
+  renderShareBanner();
   renderCurrentCard();
 }
 
 function renderPreview() {
   const list = $("[data-preview-list]");
   const importedLinks = linksFromInput();
-  const cards = importedLinks.length ? previewCardsFromLinks(importedLinks) : state.shortlist.cards;
+  const cards = importedLinks.length ? previewCardsFromLinks(importedLinks) : [];
+
   $("[data-found-count]").textContent = importedLinks.length
-    ? `${cards.length} pasted links ready to become cards`
-    : `${state.shortlist.cards.length} cards ready enough to vote`;
+    ? `${cards.length} pasted ${cards.length === 1 ? "link is" : "links are"} ready`
+    : "Paste links to create cards";
   $("[data-found-note]").textContent = importedLinks.length
-    ? "We will keep prices unverified until the source is checked."
-    : state.shortlist.cards.some((card) => card.priceLabel === "Price to verify")
-      ? "Imported links need facts checked before booking."
-      : "Demo cards need details checked later.";
-  list.innerHTML = cards
+    ? "Prices and facts stay unverified until someone opens the source."
+    : "Nothing is stored until you create a private voting link.";
+
+  list.innerHTML = cards.length
+    ? cards
     .slice(0, 3)
     .map(
       (card) => `
         <article class="preview-row">
-          <img src="${escapeAttr(card.imagePath)}" alt="" />
+          ${cardMediaMarkup(card, "preview-media")}
           <div>
             <strong>${escapeHtml(card.title)}</strong>
             <span>${escapeHtml(card.location)} · ${escapeHtml(card.priceLabel)}</span>
@@ -194,33 +289,61 @@ function renderPreview() {
         </article>
       `
     )
-    .join("");
+    .join("")
+    : `<div class="empty-preview">Add one or more links from the group chat.</div>`;
+
+  updateCreateActions(importedLinks.length > 0);
 }
 
 function renderVoters() {
   const chips = $("[data-voter-chips]");
   const avatars = $("[data-avatar-dots]");
-  const chipMarkup = state.shortlist.voters.map((voter) => `<span class="chip">${escapeHtml(voter.name)}</span>`).join("");
-  const avatarMarkup = state.shortlist.voters.map((voter) => `<span class="avatar">${escapeHtml(voter.initials)}</span>`).join("");
-  chips.innerHTML = chipMarkup;
-  avatars.innerHTML = avatarMarkup;
+  const voters = state.shortlist?.voters || [];
+  chips.innerHTML = voters.length
+    ? voters.map((voter) => `<span class="chip">${escapeHtml(voter.name)}</span>`).join("")
+    : `<span class="chip">One private link</span><span class="chip">No accounts</span>`;
+  avatars.innerHTML = voters.length
+    ? voters.map((voter) => `<span class="avatar">${escapeHtml(voter.initials)}</span>`).join("")
+    : `<span class="avatar">Y</span>`;
 }
 
 function renderVoteContext() {
   const node = $("[data-vote-context]");
-  if (hasVotedLocally()) {
-    const votedCount = Math.max(Number(state.shortlist.votedCount || 0), 1);
-    node.textContent = `${votedCount} ${votedCount === 1 ? "person has" : "people have"} voted · aim for 21:00`;
-  } else {
-    node.textContent = "Private until you choose · aim for 21:00";
+  const progressNode = $(".progress");
+  if (!state.shortlist) {
+    node.textContent = "Open a private voting link to start.";
+    if (progressNode) progressNode.textContent = "0 / 0";
+    return;
   }
-  $(".progress").textContent = `${Math.min(state.currentIndex + 1, state.shortlist.cards.length)} / ${state.shortlist.cards.length}`;
+
+  const total = state.shortlist.cards.length;
+  const saved = state.votedCardIds.size;
+  if (saved >= total) {
+    const completed = Math.max(Number(state.shortlist.completedVoterCount || 0), 1);
+    node.textContent = `Your deck is done · ${completed} ${completed === 1 ? "person" : "people"} finished`;
+  } else if (saved > 0) {
+    node.textContent = `${saved}/${total} choices saved · results unlock after the deck`;
+  } else {
+    node.textContent = "Private until your deck is done";
+  }
+  if (progressNode) progressNode.textContent = `${Math.min(state.currentIndex + 1, total)} / ${total}`;
 }
 
 function renderCurrentCard() {
   const card = currentCard();
   const target = $("[data-current-card]");
   resetDrag();
+  if (!state.shortlist) {
+    target.innerHTML = `
+      <div class="card-body is-empty-card">
+        <span class="domain">No shortlist loaded</span>
+        <h2>Paste links to start</h2>
+        <p class="trust">Create a private link first, then the vote deck appears here.</p>
+      </div>
+    `;
+    return;
+  }
+
   if (!card) {
     target.innerHTML = `
       <div class="card-body">
@@ -233,7 +356,7 @@ function renderCurrentCard() {
   }
 
   target.innerHTML = `
-    <img src="${escapeAttr(card.imagePath)}" alt="" />
+    ${cardMediaMarkup(card, "card-media")}
     <div class="card-body">
       <span class="domain">${escapeHtml(card.sourceDomain)}</span>
       <h2>${escapeHtml(card.title)}</h2>
@@ -247,26 +370,25 @@ function renderCurrentCard() {
       </div>
       <span class="trust">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-        ${escapeHtml(card.trustLabel)}
+        <span>${escapeHtml(card.trustLabel)}</span>
       </span>
+      <a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">
+        Open source link
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
+      </a>
     </div>
   `;
 }
 
 async function renderResults() {
-  if (!hasVotedLocally()) {
-    renderLockedResults();
-    return;
-  }
-  if (!state.results) {
-    await loadResults();
-  }
+  await loadResults();
   if (state.results?.locked) {
     renderLockedResults();
     return;
   }
   const winner = state.results?.winner;
   if (!winner) return;
+  const rationale = state.results?.rationale;
   const voteMarkup = winner.votes?.length
     ? `<div class="voter-result-row">${winner.votes
         .map(
@@ -280,14 +402,19 @@ async function renderResults() {
         .join("")}</div>`
     : "";
 
-  $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg> Voting complete`;
-  $("[data-result-topbar]").textContent = "Voting complete";
-  $("[data-result-heading]").textContent = `${winner.title} wins`;
-  $("[data-result-subheading]").textContent = "Everyone can live with this pick. Send it and stop the thread.";
-  $("[data-send-final]").innerHTML = `Send final pick <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" /></svg>`;
+  const rationaleClass = rationale?.tied ? "is-tied" : rationale?.summary === "vetoed" ? "is-vetoed" : rationale?.summary === "contested" ? "is-contested" : "";
+  const stateIcon = rationale?.tied
+    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01"/><path d="M12 4v12"/></svg> Split result`
+    : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7"/></svg> Voting complete`;
+
+  $("[data-result-state]").innerHTML = stateIcon;
+  $("[data-result-topbar]").textContent = rationale?.tied ? "Split result" : "Voting complete";
+  $("[data-result-heading]").textContent = `${winner.title} ${rationale?.tied ? "is top (tied)" : "wins"}`;
+  $("[data-result-subheading]").textContent = rationale?.detail || "Everyone can live with this pick. Send it and stop the thread.";
+  $("[data-send-final]").innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
   $("[data-send-status]").textContent = "Ready to copy for the group chat.";
   $("[data-winner-card]").innerHTML = `
-    <img src="${escapeAttr(winner.imagePath)}" alt="" />
+    ${cardMediaMarkup(winner, "winner-media")}
     <div class="winner-body">
       <span class="domain">${escapeHtml(winner.sourceDomain)}</span>
       <h3>${escapeHtml(winner.title)}</h3>
@@ -297,21 +424,38 @@ async function renderResults() {
         ${escapeHtml(winner.location)}
       </span>
       ${voteMarkup}
-      <div class="score-row">
+      <div class="score-row ${rationaleClass}">
         <span class="score"><strong>${winner.yesCount}</strong><span>yes</span></span>
         <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
         <span class="score"><strong>${winner.noCount}</strong><span>no</span></span>
       </div>
+      <div class="rationale-box">
+        <p>${escapeHtml(rationale?.detail || "")}</p>
+      </div>
+      <a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
+        Open final link
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
+      </a>
     </div>
   `;
-  $("[data-backup-row]")?.classList.remove("is-hidden");
+  $("[data-backup-row]")?.classList.toggle("is-hidden", !state.results?.backups?.length);
+  if (state.results?.backups?.length) {
+    const backup = state.results.backups[0];
+    $("[data-backup-row]").innerHTML = `Backup: ${escapeHtml(backup.title)} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
+    $("[data-backup-row]").dataset.note = `Backup: ${backup.title} - ${backup.sourceUrl}`;
+  }
 }
 
 async function loadResults() {
   if (!state.shortlist) return null;
-  state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/results?voterName=${encodeURIComponent("You")}`, {
+  const params = new URLSearchParams({
+    voterKey: currentVoterKey(),
+    voterName: currentVoterName()
+  });
+  state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/results?${params.toString()}`, {
     allowForbidden: true
   });
+  applyResultsShortlist(state.results);
   return state.results;
 }
 
@@ -329,10 +473,12 @@ async function castVote(vote) {
       method: "POST",
       body: JSON.stringify({
         cardId: card.id,
-        voterName: "You",
+        voterKey: currentVoterKey(),
+        voterName: currentVoterName(),
         vote
       })
     });
+    applyResultsShortlist(state.results);
     state.lastVote = { cardId: card.id, cardTitle: card.title, index: state.currentIndex, vote };
     state.votedCardIds.add(card.id);
     saveLocalVotes();
@@ -358,9 +504,11 @@ async function undoLastVote() {
       method: "DELETE",
       body: JSON.stringify({
         cardId: undone.cardId,
-        voterName: "You"
+        voterKey: currentVoterKey(),
+        voterName: currentVoterName()
       })
     });
+    applyResultsShortlist(state.results);
     state.votedCardIds.delete(undone.cardId);
     state.currentIndex = undone.index;
     state.lastVote = null;
@@ -408,6 +556,7 @@ function advanceCard() {
 
 function handleCardPointerDown(event) {
   if (!currentCard() || state.isVoting) return;
+  if (event.target.closest?.("a, button, input, textarea")) return;
   state.drag = {
     pointerId: event.pointerId,
     startX: event.clientX,
@@ -439,7 +588,7 @@ async function handleCardPointerUp(event) {
     await castVote(dx > 0 ? "yes" : "no");
     return;
   }
-  if (dy < -96) {
+  if (dy < -72) {
     await castVote("hold");
   }
 }
@@ -456,22 +605,17 @@ function resetDrag() {
 async function handleRoute() {
   const route = parseRoute();
   if (route.code && (!state.shortlist || state.shortlist.code !== route.code)) {
-    const existing = await api(`/api/shortlists/${encodeURIComponent(route.code)}`, { allow404: true });
-    if (existing) {
-      state.shortlist = existing;
-      state.results = null;
-      state.currentIndex = 0;
-      localStorage.setItem("swipe-shortlist-code", state.shortlist.code);
-      loadLocalVotes();
-      renderAll();
-    }
+    await loadShortlist(route.code);
+  }
+  if (!route.code && route.screen !== "create") {
+    setStatus("Create or open a private voting link first.");
   }
   showScreen(route.screen);
 }
 
 function showScreen(name) {
   const allowed = new Set(["create", "vote", "result"]);
-  const next = allowed.has(name) ? name : "create";
+  const next = allowed.has(name) && (name === "create" || state.shortlist) ? name : "create";
   state.routeScreen = next;
   $$("[data-screen]").forEach((screen) => {
     screen.classList.toggle("is-active", screen.dataset.screen === next);
@@ -505,7 +649,7 @@ function setStatus(message) {
 }
 
 function shareUrl() {
-  return `${location.origin}${routeHash("vote")}`;
+  return state.shortlist ? `${location.origin}${routeHash("vote")}` : "";
 }
 
 function voteLabel(vote) {
@@ -524,7 +668,10 @@ function extractLinks(text) {
 }
 
 async function copyShareLink() {
-  if (!state.shortlist) return;
+  if (!state.shortlist) {
+    setStatus("Create the private voting link first.");
+    return;
+  }
   const text = shareUrl();
   try {
     await navigator.clipboard?.writeText(text);
@@ -538,12 +685,14 @@ function previewCardsFromLinks(links) {
   return links.map((link) => {
     try {
       const url = new URL(link);
+      const linkContext = linkContextForUrl(url.toString());
       return {
-        title: titleFromUrl(url),
+        title: linkContext?.title || titleFromUrl(url),
         sourceDomain: sourceDomain(url),
-        location: "Open source link",
+        location: linkContext?.location || sourceDomain(url),
         priceLabel: "Price to verify",
-        imagePath: "/assets/beach-thumb.png"
+        facts: linkContext?.facts || [],
+        imagePath: DEFAULT_CARD_IMAGE
       };
     } catch {
       return {
@@ -551,10 +700,150 @@ function previewCardsFromLinks(links) {
         sourceDomain: "Check URL",
         location: "Paste a full https:// link",
         priceLabel: "Not imported",
-        imagePath: "/assets/mare-thumb.png"
+        imagePath: DEFAULT_CARD_IMAGE
       };
     }
   });
+}
+
+let metadataDebounceTimer = null;
+
+async function enrichDraftCards() {
+  const validCards = state.draftCards.filter(isSubmittableDraftCard);
+  const urls = validCards.map((c) => c.sourceUrl);
+  if (!urls.length) return;
+
+  try {
+    const response = await api("/api/metadata", {
+      method: "POST",
+      body: JSON.stringify({ urls }),
+    });
+    if (!response?.metadata?.length) return;
+
+    let changed = false;
+    for (const meta of response.metadata) {
+      if (!meta.fetched) continue;
+      const idx = state.draftCards.findIndex((c) => c.sourceUrl === meta.url && c.isValid);
+      if (idx === -1) continue;
+      const card = state.draftCards[idx];
+      const editedFields = card._userEditedFields || {};
+      const sourceDomain = domainFromUrl(meta.url);
+      const metadataTitle = cleanCardText(meta.title, 120);
+      const metadataDescription = cleanCardText(meta.description, 120);
+      const metadataSiteName = cleanCardText(meta.siteName, 80);
+      const metadataLocation = cleanCardText(locationFromMetadataTitle(metadataTitle), 80);
+      const metadataCardTitle = titleFromMetadataCard({
+        sourceDomain,
+        metadataTitle,
+        metadataDescription,
+      });
+
+      if (metadataCardTitle && metadataCardTitle !== "Link from " + sourceDomain && !card._userEdited && !editedFields.title) {
+        const oldTitle = card.title;
+        card.title = metadataCardTitle;
+        if (card.title !== oldTitle) changed = true;
+      }
+
+      if (!editedFields.location) {
+        if (
+          metadataLocation &&
+          (!card.location || card.location === sourceDomain || card.location === metadataSiteName || card.location === "Airbnb")
+        ) {
+          card.location = metadataLocation;
+          changed = true;
+        } else if (metadataSiteName && (!card.location || card.location === sourceDomain)) {
+          card.location = metadataSiteName;
+          changed = true;
+        }
+      }
+
+      if (!editedFields.facts) {
+        const facts = factsFromMetadataCard({
+          sourceDomain,
+          metadataTitle,
+          metadataDescription,
+          metadataSiteName,
+          existingFacts: card.facts,
+        });
+        if (facts.length) {
+          card.facts = facts;
+          changed = true;
+        }
+      }
+
+      if ((!card.imagePath || card.imagePath === DEFAULT_CARD_IMAGE || RETIRED_IMAGE_PATHS.has(card.imagePath)) && meta.ogImage) {
+        const imageUrl = cleanImageUrl(meta.ogImage);
+        if (imageUrl) {
+          card.imagePath = imageUrl;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      renderReviewCards();
+    }
+  } catch {
+    // Metadata enrichment is optional. Fallback cards still create a valid deck.
+  }
+}
+
+function cleanCardText(value, maxLength) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function locationFromMetadataTitle(title) {
+  const match = String(title || "").match(/\bin\s+([^·|–—-]{2,80})(?:\s*[·|–—-]|$)/i);
+  return match ? match[1].trim() : "";
+}
+
+function titleFromMetadataCard({ sourceDomain, metadataTitle, metadataDescription }) {
+  const isAirbnb = isAirbnbDomain(sourceDomain);
+  if (isAirbnb && metadataDescription && !/^listing id\b/i.test(metadataDescription)) {
+    return cleanCardText(metadataDescription, 72);
+  }
+  return cleanCardText(metadataTitle, 72);
+}
+
+function factsFromMetadataCard({ sourceDomain, metadataTitle, metadataDescription, metadataSiteName, existingFacts }) {
+  const facts = [];
+
+  if (isAirbnbDomain(sourceDomain) && metadataTitle) {
+    for (const [index, part] of metadataTitle.split(/[·•]/).entries()) {
+      let fact = cleanCardText(part, 56);
+      if (index === 0) fact = fact.replace(/\s+in\s+.+$/i, "").trim();
+      if (fact) facts.push(fact);
+    }
+  } else if (metadataDescription) {
+    facts.push(metadataDescription);
+  }
+
+  if (metadataSiteName && !facts.some((fact) => fact.toLowerCase().includes(metadataSiteName.toLowerCase()))) {
+    facts.push(`Listed on ${metadataSiteName}`);
+  }
+
+  for (const fact of Array.isArray(existingFacts) ? existingFacts : []) {
+    if (isUsefulMetadataFact(fact)) facts.push(fact);
+  }
+
+  return Array.from(new Set(facts.map((fact) => cleanCardText(fact, 80)).filter(isUsefulMetadataFact))).slice(0, 4);
+}
+
+function isAirbnbDomain(domain) {
+  return /(^|\.)airbnb\./i.test(String(domain || ""));
+}
+
+function isUsefulMetadataFact(fact) {
+  const value = String(fact || "").trim();
+  if (!value) return false;
+  if (/^listing id\b/i.test(value)) return false;
+  return true;
+}
+
+function scheduleMetadataEnrichment() {
+  clearTimeout(metadataDebounceTimer);
+  metadataDebounceTimer = setTimeout(() => {
+    enrichDraftCards().catch(() => {});
+  }, 400);
 }
 
 function sourceDomain(url) {
@@ -566,31 +855,372 @@ function titleFromUrl(url) {
     .split("/")
     .filter(Boolean)
     .map((part) => part.replace(/\.[a-z0-9]+$/i, ""))
-    .filter(Boolean);
-  const raw = pathBits.at(-1) || sourceDomain(url);
+    .filter(Boolean)
+    .filter(isUsefulPathPart);
+  const raw = pathBits.at(-1) || "";
   const title = raw.replace(/[-_+]+/g, " ").replace(/\s+/g, " ").trim();
-  return title ? title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72) : "Imported link";
+  if (title && title.length > 1) {
+    return title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72);
+  }
+  const domain = sourceDomain(url);
+  return `Link from ${domain}`;
+}
+
+function isUsefulPathPart(part) {
+  const normalized = part.toLowerCase();
+  return (
+    !/^\d{4,}$/.test(normalized) &&
+    !/^[a-z]{2}(?:-[a-z]{2})?$/.test(normalized) &&
+    !GENERIC_URL_PATH_PARTS.has(normalized)
+  );
+}
+
+function parseMessyText(text) {
+  if (!text || !text.trim()) return [];
+  const lines = text.split("\n");
+  const seenUrls = new Set();
+  const result = [];
+
+  const rawUrls = [];
+  lines.forEach((line, lineIndex) => {
+    const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"']+/g;
+    let match;
+    while ((match = urlPattern.exec(line)) !== null) {
+      rawUrls.push({
+        urlStr: match[0].replace(/[),.;]+$/g, ""),
+        rawLength: match[0].length,
+        lineIndex,
+        contextLine: line,
+        urlPos: match.index
+      });
+    }
+  });
+
+  for (const rawUrl of rawUrls) {
+    const { urlStr, rawLength, lineIndex, contextLine, urlPos } = rawUrl;
+    try {
+      const normalizedInput = urlStr.startsWith("www.") ? `https://${urlStr}` : urlStr;
+      const url = new URL(normalizedInput);
+      if (!["http:", "https:"].includes(url.protocol)) continue;
+      const linkContext = linkContextForUrl(url.toString());
+      const normalizedUrl = linkContext?.canonicalUrl || url.toString();
+      const isDuplicate = seenUrls.has(normalizedUrl);
+      seenUrls.add(normalizedUrl);
+      const domain = url.hostname.replace(/^www\./, "");
+
+      const textBeforeLine = lineIndex > 0 ? lines[lineIndex - 1].trim() : "";
+      const textAfterLine = lineIndex < lines.length - 1 ? lines[lineIndex + 1].trim() : "";
+      const beforeOnLine = contextLine.substring(0, urlPos).replace(/[-,;:.]*\s*$/, "").trim();
+      const afterOnLine = contextLine.substring(urlPos + rawLength).trim();
+
+      // Strip URL from context before price matching to avoid
+      // treating URL path segments (IDs, numbers) as prices.
+      const textForPrices = `${contextLine.slice(0, urlPos)} ${contextLine.slice(urlPos + rawLength)}`;
+      const priceContext = [
+        lineHasUrl(textBeforeLine) ? "" : textBeforeLine,
+        textForPrices,
+        lineHasUrl(textAfterLine) ? "" : textAfterLine
+      ];
+      const nearbyText = priceContext.filter(Boolean).join(" ");
+      const priceRegex = /(?:[$€£]\s*(?:\d+(?:[.,]\d+)?)(?:\s*\/\s*(?:night|person|week|total))?|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP)(?:\s*\/\s*(?:night|person|week|total))?)/gi;
+      const sameLinePrices = [...textForPrices.matchAll(priceRegex)];
+      const allPrices = [...nearbyText.matchAll(priceRegex)];
+      const priceText = sameLinePrices.length > 0
+        ? sameLinePrices[0][0].trim()
+        : allPrices.length > 0
+          ? allPrices[0][0].trim()
+          : "";
+
+      let title = "";
+      if (beforeOnLine && !beforeOnLine.match(/^https?:\/\//)) {
+        title = beforeOnLine.replace(/^[-\s]*/, "").replace(/[-,;]*$/, "").trim();
+      }
+      if (!title && textBeforeLine && !textBeforeLine.match(/https?:\/\//) && textBeforeLine.length < 80) {
+        title = textBeforeLine;
+      }
+      title = title || linkContext?.title || titleFromUrl(url);
+
+      let location = linkContext?.location || domain;
+      const locMatch = nearbyText.match(/\b(?:in|at|near|around)\s+([A-Z][a-zA-Z\s-]{2,30}?)(?:\s*[,.\n]|$)/);
+      if (locMatch) location = locMatch[1].trim();
+
+      const facts = [];
+      if (priceText) facts.push(`${priceText} from pasted text`);
+      for (const fact of linkContext?.facts || []) facts.push(fact);
+      if (afterOnLine && !afterOnLine.match(/^https?:\/\//)) {
+        const fragments = afterOnLine.replace(/^[-\s,;]*/, "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+        for (const f of fragments.slice(0, 3)) {
+          if (f.length > 3 && f.length < 80) facts.push(f);
+        }
+      }
+      if (textBeforeLine && textBeforeLine !== title && !textBeforeLine.match(/https?:\/\//) && textBeforeLine.length < 100) {
+        facts.push(textBeforeLine);
+      }
+
+      result.push({
+        sourceUrl: normalizedUrl,
+        title: typeof title === "string" ? title.slice(0, 72) : title,
+        priceLabel: priceText || "Price to verify",
+        location: location.slice(0, 80),
+        facts: [...new Set(facts)].slice(0, 4),
+        isValid: true,
+        isDuplicate
+      });
+    } catch {
+      result.push({
+        sourceUrl: urlStr,
+        title: "Invalid link",
+        priceLabel: "Not imported",
+        location: "Paste a full http or https link",
+        facts: ["Fix or remove this link before sharing"],
+        isValid: false,
+        isDuplicate: false
+      });
+    }
+  }
+
+  return result;
+}
+
+function isSubmittableDraftCard(card) {
+  return Boolean(card?.isValid && !card.isDuplicate);
+}
+
+function lineHasUrl(line) {
+  return /(?:https?:\/\/|www\.)[^\s<>"']+/i.test(line || "");
+}
+
+function refreshDraftDuplicateFlags() {
+  const seenUrls = new Set();
+  state.draftCards.forEach((card) => {
+    if (!card?.isValid) {
+      card.isDuplicate = false;
+      return;
+    }
+    card.isDuplicate = seenUrls.has(card.sourceUrl);
+    seenUrls.add(card.sourceUrl);
+  });
+}
+
+function draftCardsFromState() {
+  return state.draftCards.filter(isSubmittableDraftCard).map((c) => {
+    const output = {
+      sourceUrl: c.sourceUrl,
+      title: c.title || "",
+      priceLabel: c.priceLabel || "Price to verify",
+      location: c.location || "",
+      facts: Array.isArray(c.facts) ? c.facts.map((f) => String(f || "").trim()).filter(Boolean) : []
+    };
+    if (c.imagePath) output.imagePath = c.imagePath;
+    return output;
+  });
+}
+
+function renderReviewCards() {
+  const list = $("[data-review-list]");
+  const panel = $("[data-review-panel]");
+  const cards = state.draftCards || [];
+  const validCards = cards.filter(isSubmittableDraftCard);
+
+  if (!panel) {
+    renderPreview();
+    return;
+  }
+
+  const hasContent = cards.length > 0;
+  panel.classList.toggle("is-hidden", !hasContent);
+  $("[data-found-panel]")?.classList.toggle("is-hidden", hasContent);
+
+  $("[data-found-count]").textContent = hasContent
+    ? `${validCards.length} option${validCards.length !== 1 ? "s" : ""} ready. Edit then create.`
+    : "Paste links to create cards";
+  $("[data-found-note]").textContent = hasContent
+    ? "Edit details so voters have enough context to decide without reopening the chat."
+    : "Nothing is stored until you create a private voting link.";
+
+  if (!hasContent) {
+    list.innerHTML = "";
+    updateCreateActions(false);
+    return;
+  }
+
+  list.innerHTML = cards.map((card, index) => {
+    const sourceHref = card.isValid ? escapeAttr(card.sourceUrl) : "#";
+    const sourceLabel = card.isValid ? "Open source" : "Fix pasted link";
+    const cardImageSrc = displayImagePath(card.imagePath);
+    const imageHtml = cardImageSrc !== DEFAULT_CARD_IMAGE
+      ? `<img class="review-card-image" src="${escapeAttr(cardImageSrc)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.classList.add('is-fallback');this.src='/assets/link-card.svg';" />`
+      : "";
+    return `
+      <article class="review-card" data-review-index="${index}">
+        <div class="review-card-header">
+          <span class="review-index">${index + 1}</span>
+          ${card.isDuplicate ? '<span class="review-warning">Duplicate URL</span>' : ""}
+          ${!card.isValid ? '<span class="review-warning is-error">Invalid link</span>' : ""}
+          <button class="review-remove" data-remove-card="${index}" aria-label="Remove this option">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <div class="review-card-body">
+          ${imageHtml}
+          <div class="review-card-fields">
+            <label class="review-field">
+              <span>Title</span>
+              <input type="text" data-card-field="title" data-card-index="${index}" value="${escapeAttr(card.title)}" maxlength="72" />
+            </label>
+            <label class="review-field">
+              <span>Price / Status</span>
+              <input type="text" data-card-field="priceLabel" data-card-index="${index}" value="${escapeAttr(card.priceLabel)}" maxlength="40" />
+            </label>
+            <label class="review-field">
+              <span>Location / Source context</span>
+              <input type="text" data-card-field="location" data-card-index="${index}" value="${escapeAttr(card.location)}" maxlength="80" />
+            </label>
+            <label class="review-field">
+              <span>Facts (one per line)</span>
+              <textarea data-card-field="facts" data-card-index="${index}" rows="2" maxlength="300">${escapeAttr(Array.isArray(card.facts) ? card.facts.join("\n") : "")}</textarea>
+            </label>
+            <div class="review-source-row">
+              <a class="review-source" href="${sourceHref}" target="_blank" rel="noreferrer noopener">${sourceLabel}</a>
+              <span class="review-domain">${escapeHtml(domainFromUrl(card.sourceUrl))}</span>
+            </div>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  updateCreateActions(validCards.length > 0);
+}
+
+function domainFromUrl(urlStr) {
+  try { return new URL(urlStr).hostname.replace(/^www\./, ""); } catch { return ""; }
 }
 
 function renderLockedResults() {
   $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Private result`;
   $("[data-result-topbar]").textContent = "Private result";
-  $("[data-result-heading]").textContent = "Vote first, then see the winner";
-  $("[data-result-subheading]").textContent = "Your choice stays private and unlocks the group answer.";
-  $("[data-send-final]").innerHTML = `Vote first <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
+  $("[data-result-heading]").textContent = "Finish the deck to see the winner";
+  $("[data-result-subheading]").textContent = "Peer votes stay hidden until you have made a choice on every card.";
+  $("[data-send-final]").innerHTML = `Back to vote <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
   $("[data-winner-card]").innerHTML = `
     <div class="winner-body">
       <span class="domain">private result</span>
       <h3>Your vote is still hidden</h3>
-      <span class="trust">Choose No, Hold, or Yes on at least one card before group results are revealed.</span>
+      <span class="trust">Choose No, Hold, or Yes on every card before group results are revealed.</span>
     </div>
   `;
   $("[data-backup-row]")?.classList.add("is-hidden");
-  $("[data-send-status]").textContent = "Results open after your vote";
+  $("[data-send-status]").textContent = "Results open after your deck is complete";
+}
+
+function renderShareBanner() {
+  const banner = $("[data-share-banner]");
+  const privateRow = $("[data-private-row]");
+  if (!banner || !state.shortlist) {
+    if (banner) banner.classList.add("is-hidden");
+    if (privateRow) privateRow.classList.remove("is-hidden");
+    return;
+  }
+
+  if (state.showShareFlow && state.shareFlowCode === state.shortlist.code) {
+    banner.classList.remove("is-hidden");
+    if (privateRow) privateRow.classList.add("is-hidden");
+    $("[data-share-url]").textContent = shareUrl();
+  } else {
+    banner.classList.add("is-hidden");
+    if (privateRow) privateRow.classList.remove("is-hidden");
+  }
 }
 
 function hasVotedLocally() {
-  return state.votedCardIds.size > 0;
+  return Boolean(state.shortlist?.cards?.length && state.votedCardIds.size >= state.shortlist.cards.length);
+}
+
+async function loadShortlist(code) {
+  const existing = await api(`/api/shortlists/${encodeURIComponent(code)}`, { allow404: true });
+  if (!existing) {
+    state.shortlist = null;
+    state.results = null;
+    state.currentIndex = 0;
+    state.votedCardIds.clear();
+    state.showShareFlow = false;
+    state.shareFlowCode = "";
+    setStatus("That private voting link was not found.");
+    renderAll();
+    return false;
+  }
+
+  if (state.shareFlowCode !== existing.code) {
+    state.showShareFlow = false;
+    state.shareFlowCode = "";
+  }
+  state.shortlist = existing;
+  state.results = null;
+  state.voterKey = getOrCreateVoterKey(existing.code);
+  state.voterName = loadVoterName(existing.code);
+  loadLocalVotes();
+  syncCurrentIndex();
+  renderAll();
+  return true;
+}
+
+function applyResultsShortlist(results) {
+  if (!results?.shortlist) return;
+  state.shortlist = {
+    ...state.shortlist,
+    voters: results.shortlist.voters || state.shortlist?.voters || [],
+    votedCount: results.shortlist.votedCount || 0,
+    completedVoterCount: results.shortlist.completedVoterCount || 0
+  };
+}
+
+function syncCurrentIndex() {
+  const cards = state.shortlist?.cards || [];
+  const nextIndex = cards.findIndex((card) => !state.votedCardIds.has(card.id));
+  state.currentIndex = nextIndex === -1 ? cards.length : nextIndex;
+}
+
+function renderIdentity() {
+  const input = $("[data-voter-name]");
+  if (!input) return;
+  input.value = state.voterName || "You";
+  input.disabled = !state.shortlist;
+}
+
+function updateCreateActions(canCreate) {
+  $$("[data-create-shortlist]").forEach((button) => {
+    button.disabled = !canCreate;
+  });
+}
+
+function currentVoterKey() {
+  if (!state.shortlist) return "";
+  if (!state.voterKey) state.voterKey = getOrCreateVoterKey(state.shortlist.code);
+  return state.voterKey;
+}
+
+function currentVoterName() {
+  return (state.voterName || "You").trim() || "You";
+}
+
+function getOrCreateVoterKey(code) {
+  const storageKey = `swipe-shortlist-voter-key-${code}`;
+  const existing = localStorage.getItem(storageKey);
+  if (existing) return existing;
+  const next =
+    globalThis.crypto?.randomUUID?.() ||
+    `voter-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  localStorage.setItem(storageKey, next);
+  return next;
+}
+
+function loadVoterName(code) {
+  return localStorage.getItem(voterNameStorageKey(code)) || "You";
+}
+
+function voterNameStorageKey(code) {
+  return `swipe-shortlist-voter-name-${code}`;
 }
 
 function voteStorageKey() {
@@ -607,6 +1237,17 @@ function loadLocalVotes() {
 
 function saveLocalVotes() {
   localStorage.setItem(voteStorageKey(), JSON.stringify(Array.from(state.votedCardIds)));
+}
+
+function cardMediaMarkup(card, className) {
+  const imagePath = displayImagePath(card?.imagePath);
+  return `
+    <div class="${className}">
+      <img src="${escapeAttr(imagePath)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"
+           onerror="this.onerror=null;this.classList.add('is-fallback');this.src='/assets/link-card.svg';" />
+      <span>${escapeHtml(card?.sourceDomain || "link")}</span>
+    </div>
+  `;
 }
 
 function parseRoute() {
@@ -628,6 +1269,24 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function cleanImageUrl(raw) {
+  try {
+    const url = new URL(String(raw || "").trim());
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    // Reject obviously tiny/placeholder images
+    if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(url.pathname)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function displayImagePath(raw) {
+  if (!raw || RETIRED_IMAGE_PATHS.has(raw)) return DEFAULT_CARD_IMAGE;
+  if (raw === DEFAULT_CARD_IMAGE) return DEFAULT_CARD_IMAGE;
+  return cleanImageUrl(raw) || DEFAULT_CARD_IMAGE;
 }
 
 function escapeAttr(value) {

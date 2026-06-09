@@ -9,6 +9,7 @@
       content="Turn messy group-chat links into one private vote and one final pick."
     />
     <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="/assets/link-card.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -20,15 +21,15 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" /></svg>
             </button>
             <div>
-              <h1>Summer hotels</h1>
-              <p>private link</p>
+              <h1 data-title>Private shortlist</h1>
+              <p>paste links</p>
             </div>
-            <button class="code-pill" type="button" data-code data-copy-link>FAMILY-27</button>
+            <button class="code-pill" type="button" data-code data-copy-link disabled>New</button>
           </header>
 
           <div class="content content-create">
             <section class="hero-copy">
-              <h2 id="create-title">Turn 21 chat links into one decision</h2>
+              <h2 id="create-title">Turn chat links into one decision</h2>
               <p>Paste the mess. Send one voting link. Stop chasing replies.</p>
             </section>
 
@@ -56,16 +57,24 @@
               </button>
             </section>
 
-            <section class="found-panel" aria-label="Imported links">
+            <section class="found-panel" data-found-panel aria-label="Imported links">
               <div class="found-summary">
-                <strong data-found-count>3 cards ready enough to vote</strong>
-                <span data-found-note>Paste real links to replace the demo cards.</span>
+                <strong data-found-count>Paste links to create cards</strong>
+                <span data-found-note>Nothing is stored until you create a private voting link.</span>
               </div>
               <div class="preview-list" data-preview-list></div>
             </section>
 
+            <section class="review-panel is-hidden" data-review-panel aria-label="Review options before creating">
+              <div class="found-summary">
+                <strong data-found-count>Review options</strong>
+                <span data-found-note>Edit details so voters have context.</span>
+              </div>
+              <div class="review-list" data-review-list></div>
+            </section>
+
             <section class="voter-panel" aria-labelledby="voters-title">
-              <h3 id="voters-title">Who should vote?</h3>
+              <h3 id="voters-title">No setup</h3>
               <div class="chip-row" data-voter-chips></div>
               <button class="deadline" type="button" data-note="Aim set for today at 21:00">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -78,7 +87,7 @@
           </div>
 
           <footer class="bottom-bar">
-            <button class="primary-action" type="button" data-create-shortlist>
+            <button class="primary-action" type="button" data-create-shortlist disabled>
               Create voting link
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h14" />
@@ -97,14 +106,34 @@
 
         <article class="screen" data-screen="vote" aria-labelledby="vote-title">
           <header class="topbar vote-header">
-            <h1 id="vote-title" data-title>Summer hotels</h1>
-            <span class="progress">8 / 21</span>
-            <button class="code-pill" type="button" data-code data-copy-link>FAMILY-27</button>
+            <h1 id="vote-title" data-title>Private shortlist</h1>
+            <span class="progress">0 / 0</span>
+            <button class="code-pill" type="button" data-code data-copy-link disabled>New</button>
           </header>
 
           <div class="content content-vote">
-            <section class="private-row">
-              <strong>Your vote is private until you choose</strong>
+            <section class="share-banner is-hidden" data-share-banner aria-label="Share voting link">
+              <strong>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
+                Created. Share with your group
+              </strong>
+              <p>Send this private link so everyone can vote:</p>
+              <code data-share-url></code>
+              <div class="share-actions">
+                <button class="share-copy" type="button" data-share-copy>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>
+                  Copy voting link
+                </button>
+                <button class="text-button" type="button" data-share-dismiss>Start voting</button>
+              </div>
+            </section>
+
+            <section class="private-row" data-private-row>
+              <strong>Your vote is private until the deck is done</strong>
+              <label class="identity-field">
+                <span>Vote as</span>
+                <input type="text" data-voter-name autocomplete="name" maxlength="40" value="You" disabled />
+              </label>
               <span data-vote-context>Private until you choose · aim for 21:00</span>
               <div class="avatar-dots" data-avatar-dots aria-label="Participants"></div>
             </section>
@@ -157,20 +186,20 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" /></svg>
             </button>
             <div>
-              <h1 data-title>Summer hotels</h1>
-              <p data-result-topbar>Voting complete</p>
+              <h1 data-title>Private shortlist</h1>
+              <p data-result-topbar>Private result</p>
             </div>
-            <button class="code-pill" type="button" data-code data-copy-link>FAMILY-27</button>
+            <button class="code-pill" type="button" data-code data-copy-link disabled>New</button>
           </header>
 
           <div class="content content-result">
             <section class="result-hero">
               <p data-result-state>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-                Voting complete
+                Private result
               </p>
-              <h2 id="result-title" data-result-heading>Mare Blu Suites wins</h2>
-              <span data-result-subheading>Everyone can live with this pick. Send it and stop the thread.</span>
+              <h2 id="result-title" data-result-heading>Finish the deck to see the winner</h2>
+              <span data-result-subheading>Peer votes stay hidden until you have made a choice on every card.</span>
             </section>
 
             <section class="winner-card" data-winner-card aria-label="Winning option"></section>
@@ -182,17 +211,17 @@
 
           <footer class="bottom-bar">
             <button class="primary-action is-green" type="button" data-send-final>
-              Send final pick
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" />
-              </svg>
-            </button>
-            <p data-send-status aria-live="polite">
+              Copy final pick
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="6" y="10" width="12" height="9" rx="2" />
                 <path d="M8 10V8a4 4 0 0 1 8 0v2" />
               </svg>
-              Results open after your vote
+            </button>
+            <p data-send-status aria-live="polite">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 13 4 4L19 7" />
+              </svg>
+              Copy the final pick to share with your group
             </p>
           </footer>
         </article>

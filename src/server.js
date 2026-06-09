@@ -1,7 +1,8 @@
 import { createReadStream, existsSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { createServer } from "node:http";
-import { createShortlist, deleteVote, getResults, getShortlist, hasVoterVoted, migrate, recordVote } from "./db.js";
+import { createShortlist, deleteVote, getResults, getShortlist, hasVoterCompleted, migrate, recordVote } from "./db.js";
+import { fetchMetadata } from "./metadata.js";
 
 const ROOT = resolve(process.cwd());
 const PUBLIC_DIR = resolve(ROOT, "public");
@@ -22,10 +23,11 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       if (body.error) return json(res, 400, { error: body.error });
       const shortlist = createShortlist({
-        title: body.title || "Summer hotels",
-        participants: Array.isArray(body.participants) && body.participants.length ? body.participants : ["You", "Anna", "Tom", "Mia"],
-        deadlineLabel: body.deadlineLabel || "Aim to decide by 21:00",
-        links: body.links || []
+        title: body.title,
+        participants: Array.isArray(body.participants) ? body.participants : [],
+        deadlineLabel: body.deadlineLabel,
+        links: body.links || [],
+        cards: Array.isArray(body.cards) ? body.cards : null
       });
       return json(res, 201, shortlist);
     }
@@ -43,35 +45,57 @@ const server = createServer(async (req, res) => {
       if (!["yes", "no", "hold", "strong_yes"].includes(body.vote)) {
         return json(res, 400, { error: "Invalid vote" });
       }
+      const code = decodeURIComponent(voteMatch[1]);
+      const voter = {
+        voterKey: body.voterKey,
+        voterName: body.voterName || "Guest"
+      };
       const results = recordVote({
-        code: decodeURIComponent(voteMatch[1]),
+        code,
         cardId: Number(body.cardId),
-        voterName: body.voterName || "You",
+        ...voter,
         vote: body.vote
       });
-      return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
+      return results ? json(res, 200, voteResponsePayload(code, voter)) : json(res, 404, { error: "Shortlist not found" });
     }
 
     if (req.method === "DELETE" && voteMatch) {
       const body = await readJson(req);
       if (body.error) return json(res, 400, { error: body.error });
+      const code = decodeURIComponent(voteMatch[1]);
+      const voter = {
+        voterKey: body.voterKey,
+        voterName: body.voterName || "Guest"
+      };
       const results = deleteVote({
-        code: decodeURIComponent(voteMatch[1]),
+        code,
         cardId: Number(body.cardId),
-        voterName: body.voterName || "You"
+        ...voter
       });
-      return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
+      return results ? json(res, 200, voteResponsePayload(code, voter)) : json(res, 404, { error: "Shortlist not found" });
     }
 
     const resultMatch = url.pathname.match(/^\/api\/shortlists\/([^/]+)\/results$/);
     if (req.method === "GET" && resultMatch) {
       const code = decodeURIComponent(resultMatch[1]);
+      const voterKey = url.searchParams.get("voterKey") || "";
       const voterName = url.searchParams.get("voterName") || "";
-      if (!hasVoterVoted(code, voterName)) {
-        return json(res, 200, { locked: true, error: "Vote before results" });
+      if (!hasVoterCompleted(code, { voterKey, voterName })) {
+        return json(res, 200, { locked: true, error: "Finish voting before results" });
       }
       const results = getResults(code);
       return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/metadata") {
+      const body = await readJson(req);
+      if (body.error) return json(res, 400, { error: body.error });
+      const rawUrls = Array.isArray(body.urls) ? body.urls.slice(0, 20) : [];
+      const results = await Promise.allSettled(rawUrls.map((u) => fetchMetadata(String(u))));
+      const metadata = results
+        .filter((r) => r.status === "fulfilled" && r.value !== null)
+        .map((r) => r.value);
+      return json(res, 200, { metadata });
     }
 
     if (req.method === "GET" || req.method === "HEAD") {
@@ -80,10 +104,15 @@ const server = createServer(async (req, res) => {
 
     json(res, 405, { error: "Method not allowed" });
   } catch (error) {
-    console.error(error);
-    if (error.message === "Unknown voter" || error.message === "Unknown card") {
+    if (
+      error.message === "Unknown voter" ||
+      error.message === "Unknown card" ||
+      error.message === "Paste at least one valid http or https link." ||
+      error.message === "Each card needs a valid http or https source URL."
+    ) {
       return json(res, 400, { error: error.message });
     }
+    console.error(error);
     json(res, 500, { error: "Internal server error" });
   }
 });
@@ -100,6 +129,17 @@ function json(res, status, payload) {
     ...securityHeaders()
   });
   res.end(body);
+}
+
+function voteResponsePayload(code, voter) {
+  if (hasVoterCompleted(code, voter)) {
+    return getResults(code);
+  }
+
+  const shortlist = getShortlist(code);
+  return shortlist
+    ? { locked: true, error: "Finish voting before results", shortlist }
+    : null;
 }
 
 async function readJson(req) {
@@ -119,7 +159,7 @@ async function readJson(req) {
 }
 
 function serveStatic(pathname, res, headOnly = false) {
-  const safePath = pathname === "/" ? "/index.html" : pathname;
+  const safePath = pathname === "/" ? "/index.html" : pathname === "/favicon.ico" ? "/assets/link-card.svg" : pathname;
   const normalized = normalize(decodeURIComponent(safePath)).replace(/^(\.\.[/\\])+/, "");
   const filePath = resolve(join(PUBLIC_DIR, normalized));
 
@@ -165,3 +205,5 @@ function contentType(filePath) {
       return "application/octet-stream";
   }
 }
+
+// Metadata enrichment imported from ./metadata.js (SSRF-safe fetch + HTML parsing)
