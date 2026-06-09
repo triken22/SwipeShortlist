@@ -161,7 +161,7 @@ function wireControls() {
   $("[data-share-copy]")?.addEventListener("click", async () => {
     await copyShareLink();
     const btn = $("[data-share-copy]");
-    btn.textContent = "✓ Copied!";
+    btn.textContent = "Copied";
     setTimeout(() => {
       btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg> Copy voting link`;
     }, 2000);
@@ -207,7 +207,7 @@ function wireControls() {
     try {
       await navigator.clipboard?.writeText(text);
       const btn = $("[data-send-final]");
-      btn.innerHTML = `✓ Copied! <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>`;
+      btn.innerHTML = `Copied <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>`;
       setTimeout(() => {
         btn.innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
       }, 2000);

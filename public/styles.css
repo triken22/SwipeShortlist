@@ -986,8 +986,18 @@ button.code-pill:hover {
 }
 
 .share-banner strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 1.02rem;
   line-height: 1.2;
+}
+
+.share-banner strong svg {
+  width: 18px;
+  height: 18px;
+  color: var(--green);
+  flex: 0 0 auto;
 }
 
 .share-banner p {
