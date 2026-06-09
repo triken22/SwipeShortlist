@@ -612,7 +612,7 @@ button.code-pill:hover {
 }
 
 .card-media {
-  height: 260px;
+  height: 240px;
 }
 
 .winner-media {
@@ -645,9 +645,17 @@ button.code-pill:hover {
   white-space: nowrap;
 }
 
+.card-media img.is-fallback,
+.winner-media img.is-fallback,
+.review-card-image.is-fallback {
+  object-fit: contain;
+  padding: 20%;
+  opacity: 0.4;
+}
+
 .card-body {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   padding: 18px;
 }
 
@@ -699,11 +707,20 @@ button.code-pill:hover {
 
 .trust {
   display: flex;
+  min-width: 0;
   gap: 7px;
   align-items: flex-start;
   color: var(--muted);
   font-size: 0.83rem;
   line-height: 1.22;
+}
+
+.trust svg {
+  flex: 0 0 16px;
+}
+
+.trust > span {
+  min-width: 0;
 }
 
 .source-link {
@@ -804,6 +821,7 @@ button.code-pill:hover {
   border: 1.5px solid var(--line);
   border-radius: var(--radius);
   background: #fff;
+  touch-action: manipulation;
 }
 
 .vote-button:hover {
@@ -1207,6 +1225,25 @@ button.code-pill:hover {
   font-weight: 720;
 }
 
+.review-card-body {
+  display: flex;
+  gap: 12px;
+}
+
+.review-card-image {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--soft);
+}
+
+.review-card-fields {
+  flex: 1;
+  min-width: 0;
+}
+
 .rationale-box {
   padding: 10px 12px;
   border-radius: var(--radius);
@@ -1315,6 +1352,12 @@ button.code-pill:hover {
     min-height: 44px;
   }
 
+  .review-card-image {
+    flex: 0 0 56px;
+    width: 56px;
+    height: 42px;
+  }
+
   .card-stack {
     min-height: 420px;
     padding-bottom: 16px;
@@ -1325,7 +1368,7 @@ button.code-pill:hover {
   }
 
   .card-media {
-    height: 132px;
+    height: 170px;
   }
 
   .winner-media {
@@ -1333,7 +1376,7 @@ button.code-pill:hover {
   }
 
   .card-body {
-    gap: 7px;
+    gap: 6px;
     padding: 12px;
   }
 
@@ -1347,8 +1390,8 @@ button.code-pill:hover {
   }
 
   .fact-row {
-    max-height: 62px;
-    overflow: hidden;
+    max-height: 108px;
+    overflow-y: auto;
   }
 
   .fact {
@@ -1359,6 +1402,12 @@ button.code-pill:hover {
 
   .trust {
     font-size: 0.76rem;
+  }
+
+  .trust > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .source-link {
@@ -1421,11 +1470,11 @@ button.code-pill:hover {
   }
 
   .action-grid {
-    gap: 8px;
+    gap: 10px;
   }
 
   .vote-button {
-    min-height: 72px;
+    min-height: 80px;
     padding: 8px 6px;
   }
 
@@ -1489,7 +1538,7 @@ button.code-pill:hover {
   }
 
   .card-media {
-    height: 140px;
+    height: 150px;
   }
 
   .action-grid {

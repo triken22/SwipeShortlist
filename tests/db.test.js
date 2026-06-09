@@ -197,11 +197,13 @@ test("creates shortlist from structured draft cards with user-edited context", a
   try {
     dbModule.migrate();
     const cards = [
-      { sourceUrl: "https://example.org/bali-resort", title: "Bali Beach Resort", priceLabel: "$150/night", location: "Bali, Indonesia", facts: ["Beachfront", "Pool", "Breakfast included"] },
+      { sourceUrl: "https://example.org/bali-resort", title: "Bali Beach Resort", priceLabel: "$150/night", location: "Bali, Indonesia", facts: ["Beachfront", "Pool", "Breakfast included"], imagePath: "https://example.org/bali.jpg" },
       { sourceUrl: "https://example.net/ubud-inn", title: "Ubud Garden Inn", priceLabel: "$85/night", location: "Ubud, Bali", facts: ["Rice terrace view"] }
     ];
     const shortlist = dbModule.createShortlist({ title: "Bali Trip", cards });
     assert.equal(shortlist.cards.length, 2);
+    assert.equal(shortlist.cards[0].imagePath, "https://example.org/bali.jpg", "draft card with imagePath persists through createShortlist");
+    assert.equal(shortlist.cards[1].imagePath, "/assets/link-card.svg", "draft card without imagePath falls back to DEFAULT_CARD_IMAGE");
     assert.equal(shortlist.cards[0].title, "Bali Beach Resort");
     assert.equal(shortlist.cards[0].priceLabel, "$150/night");
     assert.equal(shortlist.cards[0].location, "Bali, Indonesia");

@@ -370,7 +370,7 @@ function renderCurrentCard() {
       </div>
       <span class="trust">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-        ${escapeHtml(card.trustLabel)}
+        <span>${escapeHtml(card.trustLabel)}</span>
       </span>
       <a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">
         Open source link
@@ -588,7 +588,7 @@ async function handleCardPointerUp(event) {
     await castVote(dx > 0 ? "yes" : "no");
     return;
   }
-  if (dy < -96) {
+  if (dy < -72) {
     await castVote("hold");
   }
 }
@@ -728,13 +728,19 @@ async function enrichDraftCards() {
       const card = state.draftCards[idx];
       const editedFields = card._userEditedFields || {};
       const sourceDomain = domainFromUrl(meta.url);
-      const metadataTitle = cleanCardText(meta.title, 72);
+      const metadataTitle = cleanCardText(meta.title, 120);
       const metadataDescription = cleanCardText(meta.description, 120);
       const metadataSiteName = cleanCardText(meta.siteName, 80);
       const metadataLocation = cleanCardText(locationFromMetadataTitle(metadataTitle), 80);
-      if (metadataTitle && metadataTitle !== "Link from " + sourceDomain && !card._userEdited && !editedFields.title) {
+      const metadataCardTitle = titleFromMetadataCard({
+        sourceDomain,
+        metadataTitle,
+        metadataDescription,
+      });
+
+      if (metadataCardTitle && metadataCardTitle !== "Link from " + sourceDomain && !card._userEdited && !editedFields.title) {
         const oldTitle = card.title;
-        card.title = metadataTitle;
+        card.title = metadataCardTitle;
         if (card.title !== oldTitle) changed = true;
       }
 
@@ -752,11 +758,23 @@ async function enrichDraftCards() {
       }
 
       if (!editedFields.facts) {
-        if (metadataDescription) {
-          card.facts = [metadataDescription, ...(card.facts || []).filter((fact) => fact !== metadataDescription)].slice(0, 4);
+        const facts = factsFromMetadataCard({
+          sourceDomain,
+          metadataTitle,
+          metadataDescription,
+          metadataSiteName,
+          existingFacts: card.facts,
+        });
+        if (facts.length) {
+          card.facts = facts;
           changed = true;
-        } else if (metadataSiteName) {
-          card.facts = [`Listed on ${metadataSiteName}`, ...(card.facts || [])].slice(0, 4);
+        }
+      }
+
+      if ((!card.imagePath || card.imagePath === DEFAULT_CARD_IMAGE || RETIRED_IMAGE_PATHS.has(card.imagePath)) && meta.ogImage) {
+        const imageUrl = cleanImageUrl(meta.ogImage);
+        if (imageUrl) {
+          card.imagePath = imageUrl;
           changed = true;
         }
       }
@@ -776,6 +794,49 @@ function cleanCardText(value, maxLength) {
 function locationFromMetadataTitle(title) {
   const match = String(title || "").match(/\bin\s+([^·|–—-]{2,80})(?:\s*[·|–—-]|$)/i);
   return match ? match[1].trim() : "";
+}
+
+function titleFromMetadataCard({ sourceDomain, metadataTitle, metadataDescription }) {
+  const isAirbnb = isAirbnbDomain(sourceDomain);
+  if (isAirbnb && metadataDescription && !/^listing id\b/i.test(metadataDescription)) {
+    return cleanCardText(metadataDescription, 72);
+  }
+  return cleanCardText(metadataTitle, 72);
+}
+
+function factsFromMetadataCard({ sourceDomain, metadataTitle, metadataDescription, metadataSiteName, existingFacts }) {
+  const facts = [];
+
+  if (isAirbnbDomain(sourceDomain) && metadataTitle) {
+    for (const [index, part] of metadataTitle.split(/[·•]/).entries()) {
+      let fact = cleanCardText(part, 56);
+      if (index === 0) fact = fact.replace(/\s+in\s+.+$/i, "").trim();
+      if (fact) facts.push(fact);
+    }
+  } else if (metadataDescription) {
+    facts.push(metadataDescription);
+  }
+
+  if (metadataSiteName && !facts.some((fact) => fact.toLowerCase().includes(metadataSiteName.toLowerCase()))) {
+    facts.push(`Listed on ${metadataSiteName}`);
+  }
+
+  for (const fact of Array.isArray(existingFacts) ? existingFacts : []) {
+    if (isUsefulMetadataFact(fact)) facts.push(fact);
+  }
+
+  return Array.from(new Set(facts.map((fact) => cleanCardText(fact, 80)).filter(isUsefulMetadataFact))).slice(0, 4);
+}
+
+function isAirbnbDomain(domain) {
+  return /(^|\.)airbnb\./i.test(String(domain || ""));
+}
+
+function isUsefulMetadataFact(fact) {
+  const value = String(fact || "").trim();
+  if (!value) return false;
+  if (/^listing id\b/i.test(value)) return false;
+  return true;
 }
 
 function scheduleMetadataEnrichment() {
@@ -942,13 +1003,17 @@ function refreshDraftDuplicateFlags() {
 }
 
 function draftCardsFromState() {
-  return state.draftCards.filter(isSubmittableDraftCard).map((c) => ({
-    sourceUrl: c.sourceUrl,
-    title: c.title || "",
-    priceLabel: c.priceLabel || "Price to verify",
-    location: c.location || "",
-    facts: Array.isArray(c.facts) ? c.facts.map((f) => String(f || "").trim()).filter(Boolean) : []
-  }));
+  return state.draftCards.filter(isSubmittableDraftCard).map((c) => {
+    const output = {
+      sourceUrl: c.sourceUrl,
+      title: c.title || "",
+      priceLabel: c.priceLabel || "Price to verify",
+      location: c.location || "",
+      facts: Array.isArray(c.facts) ? c.facts.map((f) => String(f || "").trim()).filter(Boolean) : []
+    };
+    if (c.imagePath) output.imagePath = c.imagePath;
+    return output;
+  });
 }
 
 function renderReviewCards() {
@@ -982,6 +1047,10 @@ function renderReviewCards() {
   list.innerHTML = cards.map((card, index) => {
     const sourceHref = card.isValid ? escapeAttr(card.sourceUrl) : "#";
     const sourceLabel = card.isValid ? "Open source" : "Fix pasted link";
+    const cardImageSrc = displayImagePath(card.imagePath);
+    const imageHtml = cardImageSrc !== DEFAULT_CARD_IMAGE
+      ? `<img class="review-card-image" src="${escapeAttr(cardImageSrc)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.classList.add('is-fallback');this.src='/assets/link-card.svg';" />`
+      : "";
     return `
       <article class="review-card" data-review-index="${index}">
         <div class="review-card-header">
@@ -992,25 +1061,30 @@ function renderReviewCards() {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>
           </button>
         </div>
-        <label class="review-field">
-          <span>Title</span>
-          <input type="text" data-card-field="title" data-card-index="${index}" value="${escapeAttr(card.title)}" maxlength="72" />
-        </label>
-        <label class="review-field">
-          <span>Price / Status</span>
-          <input type="text" data-card-field="priceLabel" data-card-index="${index}" value="${escapeAttr(card.priceLabel)}" maxlength="40" />
-        </label>
-        <label class="review-field">
-          <span>Location / Source context</span>
-          <input type="text" data-card-field="location" data-card-index="${index}" value="${escapeAttr(card.location)}" maxlength="80" />
-        </label>
-        <label class="review-field">
-          <span>Facts (one per line)</span>
-          <textarea data-card-field="facts" data-card-index="${index}" rows="2" maxlength="300">${escapeAttr(Array.isArray(card.facts) ? card.facts.join("\n") : "")}</textarea>
-        </label>
-        <div class="review-source-row">
-          <a class="review-source" href="${sourceHref}" target="_blank" rel="noreferrer noopener">${sourceLabel}</a>
-          <span class="review-domain">${escapeHtml(domainFromUrl(card.sourceUrl))}</span>
+        <div class="review-card-body">
+          ${imageHtml}
+          <div class="review-card-fields">
+            <label class="review-field">
+              <span>Title</span>
+              <input type="text" data-card-field="title" data-card-index="${index}" value="${escapeAttr(card.title)}" maxlength="72" />
+            </label>
+            <label class="review-field">
+              <span>Price / Status</span>
+              <input type="text" data-card-field="priceLabel" data-card-index="${index}" value="${escapeAttr(card.priceLabel)}" maxlength="40" />
+            </label>
+            <label class="review-field">
+              <span>Location / Source context</span>
+              <input type="text" data-card-field="location" data-card-index="${index}" value="${escapeAttr(card.location)}" maxlength="80" />
+            </label>
+            <label class="review-field">
+              <span>Facts (one per line)</span>
+              <textarea data-card-field="facts" data-card-index="${index}" rows="2" maxlength="300">${escapeAttr(Array.isArray(card.facts) ? card.facts.join("\n") : "")}</textarea>
+            </label>
+            <div class="review-source-row">
+              <a class="review-source" href="${sourceHref}" target="_blank" rel="noreferrer noopener">${sourceLabel}</a>
+              <span class="review-domain">${escapeHtml(domainFromUrl(card.sourceUrl))}</span>
+            </div>
+          </div>
         </div>
       </article>
     `;
@@ -1166,10 +1240,11 @@ function saveLocalVotes() {
 }
 
 function cardMediaMarkup(card, className) {
-  const imagePath = card?.imagePath && !RETIRED_IMAGE_PATHS.has(card.imagePath) ? card.imagePath : DEFAULT_CARD_IMAGE;
+  const imagePath = displayImagePath(card?.imagePath);
   return `
     <div class="${className}">
-      <img src="${escapeAttr(imagePath)}" alt="" loading="lazy" />
+      <img src="${escapeAttr(imagePath)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"
+           onerror="this.onerror=null;this.classList.add('is-fallback');this.src='/assets/link-card.svg';" />
       <span>${escapeHtml(card?.sourceDomain || "link")}</span>
     </div>
   `;
@@ -1194,6 +1269,24 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function cleanImageUrl(raw) {
+  try {
+    const url = new URL(String(raw || "").trim());
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    // Reject obviously tiny/placeholder images
+    if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(url.pathname)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function displayImagePath(raw) {
+  if (!raw || RETIRED_IMAGE_PATHS.has(raw)) return DEFAULT_CARD_IMAGE;
+  if (raw === DEFAULT_CARD_IMAGE) return DEFAULT_CARD_IMAGE;
+  return cleanImageUrl(raw) || DEFAULT_CARD_IMAGE;
 }
 
 function escapeAttr(value) {

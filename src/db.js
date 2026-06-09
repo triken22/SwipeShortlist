@@ -14,9 +14,22 @@ db.exec("PRAGMA foreign_keys = ON");
 db.exec("PRAGMA journal_mode = WAL");
 
 const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
+const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"]);
 const DEFAULT_TITLE = "Private shortlist";
 const DEFAULT_DEADLINE_LABEL = "Aim to decide today";
 const MAX_LINKS = 50;
+
+function cleanImageUrl(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  try {
+    const url = new URL(raw.trim());
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(url.pathname)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
 const GENERIC_URL_PATH_PARTS = new Set([
   "accommodation",
   "accommodations",
@@ -434,7 +447,7 @@ function cardsFromDraftCards(draftCards) {
           trustLabel: facts.length > 0
             ? "Context from your pasted text · verify details before deciding"
             : linkContext?.trustLabel || "Imported from pasted link · verify details before deciding",
-          imagePath: DEFAULT_CARD_IMAGE
+          imagePath: (card.imagePath && cleanImageUrl(card.imagePath)) || DEFAULT_CARD_IMAGE
         };
       } catch {
         return null;
