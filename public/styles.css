@@ -975,6 +975,10 @@ button.code-pill:hover {
   font-weight: 800;
 }
 
+.is-hidden {
+  display: none !important;
+}
+
 .review-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);

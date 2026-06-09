@@ -55,7 +55,7 @@ function wireControls() {
       input.classList.remove("is-hidden");
       state.draftCards = parseMessyText(text);
       renderReviewCards();
-      const count = state.draftCards.filter(c => c.isValid).length;
+      const count = state.draftCards.filter(isSubmittableDraftCard).length;
       setStatus(count ? `${count} option${count !== 1 ? "s" : ""} extracted. Review and create the voting link.` : "Paste at least one full http or https link.");
     } catch {
       input.classList.remove("is-hidden");
@@ -67,7 +67,7 @@ function wireControls() {
   $("[data-link-input]")?.addEventListener("input", () => {
     state.draftCards = parseMessyText($("[data-link-input]")?.value || "");
     renderReviewCards();
-    const count = state.draftCards.filter(c => c.isValid).length;
+    const count = state.draftCards.filter(isSubmittableDraftCard).length;
     if (count) {
       setStatus(`${count} option${count !== 1 ? "s" : ""} extracted. Review and create the voting link.`);
     } else {
@@ -91,7 +91,7 @@ function wireControls() {
     } else {
       state.draftCards[index][field] = target.value;
     }
-    updateCreateActions(state.draftCards.filter((c) => c.isValid).length > 0);
+    updateCreateActions(state.draftCards.filter(isSubmittableDraftCard).length > 0);
   });
 
   $("[data-review-list]")?.addEventListener("click", (event) => {
@@ -101,7 +101,7 @@ function wireControls() {
     if (isNaN(index) || index >= state.draftCards.length) return;
     state.draftCards.splice(index, 1);
     renderReviewCards();
-    const remaining = state.draftCards.filter((c) => c.isValid).length;
+    const remaining = state.draftCards.filter(isSubmittableDraftCard).length;
     setStatus(remaining ? `Removed. ${remaining} option${remaining !== 1 ? "s" : ""} remaining.` : "No options left. Paste links to add more.");
   });
 
@@ -673,18 +673,16 @@ function parseMessyText(text) {
   const seenUrls = new Set();
   const result = [];
 
-  const rawUrls = Array.from(new Set(
-    (text.match(/https?:\/\/[^\s<>"']+/g) || [])
-      .map((u) => u.replace(/[),.;]+$/g, ""))
-  ));
+  const rawUrls = (text.match(/(?:https?:\/\/|www\.)[^\s<>"']+/g) || [])
+    .map((u) => u.replace(/[),.;]+$/g, ""));
 
   for (const urlStr of rawUrls) {
-    if (seenUrls.has(urlStr)) continue;
-    seenUrls.add(urlStr);
-
     try {
       const url = new URL(urlStr);
       if (!["http:", "https:"].includes(url.protocol)) continue;
+      const normalizedUrl = url.toString();
+      const isDuplicate = seenUrls.has(normalizedUrl);
+      seenUrls.add(normalizedUrl);
       const domain = url.hostname.replace(/^www\./, "");
 
       let lineIndex = -1;
@@ -739,29 +737,36 @@ function parseMessyText(text) {
       }
 
       result.push({
-        sourceUrl: url.toString(),
+        sourceUrl: normalizedUrl,
         title: typeof title === "string" ? title.slice(0, 72) : title,
         priceLabel: priceText || "Price to verify",
         location: location.slice(0, 80),
         facts: [...new Set(facts)].slice(0, 4),
         isValid: true,
-        isDuplicate: false
+        isDuplicate
       });
     } catch {
-      /* skip unparseable */
+      result.push({
+        sourceUrl: urlStr,
+        title: "Invalid link",
+        priceLabel: "Not imported",
+        location: "Paste a full http or https link",
+        facts: ["Fix or remove this link before sharing"],
+        isValid: false,
+        isDuplicate: false
+      });
     }
   }
 
-  const urlCount = new Map();
-  result.forEach((card) => urlCount.set(card.sourceUrl, (urlCount.get(card.sourceUrl) || 0) + 1));
-  result.forEach((card) => {
-    if ((urlCount.get(card.sourceUrl) || 0) > 1) card.isDuplicate = true;
-  });
   return result;
 }
 
+function isSubmittableDraftCard(card) {
+  return Boolean(card?.isValid && !card.isDuplicate);
+}
+
 function draftCardsFromState() {
-  return state.draftCards.filter((c) => c.isValid).map((c) => ({
+  return state.draftCards.filter(isSubmittableDraftCard).map((c) => ({
     sourceUrl: c.sourceUrl,
     title: c.title || "",
     priceLabel: c.priceLabel || "Price to verify",
@@ -774,7 +779,7 @@ function renderReviewCards() {
   const list = $("[data-review-list]");
   const panel = $("[data-review-panel]");
   const cards = state.draftCards || [];
-  const validCards = cards.filter((c) => c.isValid);
+  const validCards = cards.filter(isSubmittableDraftCard);
 
   if (!panel) {
     renderPreview();
@@ -798,36 +803,40 @@ function renderReviewCards() {
     return;
   }
 
-  list.innerHTML = cards.map((card, index) => `
-    <article class="review-card" data-review-index="${index}">
-      <div class="review-card-header">
-        <span class="review-index">${index + 1}</span>
-        ${card.isDuplicate ? '<span class="review-warning">Duplicate URL</span>' : ""}
-        ${!card.isValid ? '<span class="review-warning is-error">Invalid link</span>' : ""}
-        <button class="review-remove" data-remove-card="${index}" aria-label="Remove this option">✕</button>
-      </div>
-      <label class="review-field">
-        <span>Title</span>
-        <input type="text" data-card-field="title" data-card-index="${index}" value="${escapeAttr(card.title)}" maxlength="72" />
-      </label>
-      <label class="review-field">
-        <span>Price / Status</span>
-        <input type="text" data-card-field="priceLabel" data-card-index="${index}" value="${escapeAttr(card.priceLabel)}" maxlength="40" />
-      </label>
-      <label class="review-field">
-        <span>Location / Source context</span>
-        <input type="text" data-card-field="location" data-card-index="${index}" value="${escapeAttr(card.location)}" maxlength="80" />
-      </label>
-      <label class="review-field">
-        <span>Facts (one per line)</span>
-        <textarea data-card-field="facts" data-card-index="${index}" rows="2" maxlength="300">${escapeAttr(Array.isArray(card.facts) ? card.facts.join("\n") : "")}</textarea>
-      </label>
-      <div class="review-source-row">
-        <a class="review-source" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">Open source</a>
-        <span class="review-domain">${escapeHtml(domainFromUrl(card.sourceUrl))}</span>
-      </div>
-    </article>
-  `).join("");
+  list.innerHTML = cards.map((card, index) => {
+    const sourceHref = card.isValid ? escapeAttr(card.sourceUrl) : "#";
+    const sourceLabel = card.isValid ? "Open source" : "Fix pasted link";
+    return `
+      <article class="review-card" data-review-index="${index}">
+        <div class="review-card-header">
+          <span class="review-index">${index + 1}</span>
+          ${card.isDuplicate ? '<span class="review-warning">Duplicate URL</span>' : ""}
+          ${!card.isValid ? '<span class="review-warning is-error">Invalid link</span>' : ""}
+          <button class="review-remove" data-remove-card="${index}" aria-label="Remove this option">✕</button>
+        </div>
+        <label class="review-field">
+          <span>Title</span>
+          <input type="text" data-card-field="title" data-card-index="${index}" value="${escapeAttr(card.title)}" maxlength="72" />
+        </label>
+        <label class="review-field">
+          <span>Price / Status</span>
+          <input type="text" data-card-field="priceLabel" data-card-index="${index}" value="${escapeAttr(card.priceLabel)}" maxlength="40" />
+        </label>
+        <label class="review-field">
+          <span>Location / Source context</span>
+          <input type="text" data-card-field="location" data-card-index="${index}" value="${escapeAttr(card.location)}" maxlength="80" />
+        </label>
+        <label class="review-field">
+          <span>Facts (one per line)</span>
+          <textarea data-card-field="facts" data-card-index="${index}" rows="2" maxlength="300">${escapeAttr(Array.isArray(card.facts) ? card.facts.join("\n") : "")}</textarea>
+        </label>
+        <div class="review-source-row">
+          <a class="review-source" href="${sourceHref}" target="_blank" rel="noreferrer noopener">${sourceLabel}</a>
+          <span class="review-domain">${escapeHtml(domainFromUrl(card.sourceUrl))}</span>
+        </div>
+      </article>
+    `;
+  }).join("");
 
   updateCreateActions(validCards.length > 0);
 }
