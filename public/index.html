@@ -111,7 +111,20 @@
           </header>
 
           <div class="content content-vote">
-            <section class="private-row">
+            <section class="share-banner is-hidden" data-share-banner aria-label="Share voting link">
+              <strong>✅ Created! Share with your group</strong>
+              <p>Send this private link so everyone can vote:</p>
+              <code data-share-url></code>
+              <div class="share-actions">
+                <button class="share-copy" type="button" data-share-copy>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>
+                  Copy voting link
+                </button>
+                <button class="text-button" type="button" data-share-dismiss>Start voting</button>
+              </div>
+            </section>
+
+            <section class="private-row" data-private-row>
               <strong>Your vote is private until the deck is done</strong>
               <label class="identity-field">
                 <span>Vote as</span>
@@ -194,17 +207,17 @@
 
           <footer class="bottom-bar">
             <button class="primary-action is-green" type="button" data-send-final>
-              Finish voting
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" />
-              </svg>
-            </button>
-            <p data-send-status aria-live="polite">
+              Copy final pick
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="6" y="10" width="12" height="9" rx="2" />
                 <path d="M8 10V8a4 4 0 0 1 8 0v2" />
               </svg>
-              Results open after your deck is complete
+            </button>
+            <p data-send-status aria-live="polite">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 13 4 4L19 7" />
+              </svg>
+              Copy the final pick to share with your group
             </p>
           </footer>
         </article>

@@ -8,6 +8,7 @@ const state = {
   voterName: "You",
   isVoting: false,
   lastVote: null,
+  showShareFlow: false,
   drag: null,
   routeScreen: "create"
 };
@@ -130,6 +131,7 @@ function wireControls() {
         state.votedCardIds.clear();
         state.voterKey = getOrCreateVoterKey(state.shortlist.code);
         state.voterName = loadVoterName(state.shortlist.code);
+        state.showShareFlow = true;
         localStorage.setItem("swipe-shortlist-last-code", state.shortlist.code);
         saveLocalVotes();
         renderAll();
@@ -154,6 +156,21 @@ function wireControls() {
 
   $$("[data-copy-link]").forEach((button) => {
     button.addEventListener("click", copyShareLink);
+  });
+
+  $("[data-share-copy]")?.addEventListener("click", async () => {
+    await copyShareLink();
+    const btn = $("[data-share-copy]");
+    btn.textContent = "✓ Copied!";
+    setTimeout(() => {
+      btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg> Copy voting link`;
+    }, 2000);
+  });
+
+  $("[data-share-dismiss]")?.addEventListener("click", () => {
+    state.showShareFlow = false;
+    renderAll();
+    setStatus("Your voting link is ready. Share it from the code pill at the top.");
   });
 
   $("[data-voter-name]")?.addEventListener("input", (event) => {
@@ -189,7 +206,12 @@ function wireControls() {
     const text = loaded.rationale?.copyText || `${loaded.winner.title} is the final pick: ${loaded.winner.sourceUrl}`;
     try {
       await navigator.clipboard?.writeText(text);
-      $("[data-send-status]").textContent = "Final pick copied for the group chat.";
+      const btn = $("[data-send-final]");
+      btn.innerHTML = `✓ Copied! <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>`;
+      setTimeout(() => {
+        btn.innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
+      }, 2000);
+      $("[data-send-status]").textContent = "Copied! Paste it into your group chat.";
     } catch {
       $("[data-send-status]").textContent = text;
     }
@@ -208,6 +230,7 @@ function renderAll() {
   renderReviewCards();
   renderVoters();
   renderVoteContext();
+  renderShareBanner();
   renderCurrentCard();
 }
 
@@ -359,7 +382,7 @@ async function renderResults() {
   $("[data-result-topbar]").textContent = rationale?.tied ? "Split result" : "Voting complete";
   $("[data-result-heading]").textContent = `${winner.title} ${rationale?.tied ? "is top (tied)" : "wins"}`;
   $("[data-result-subheading]").textContent = rationale?.detail || "Everyone can live with this pick. Send it and stop the thread.";
-  $("[data-send-final]").innerHTML = `Send final pick <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" /></svg>`;
+  $("[data-send-final]").innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
   $("[data-send-status]").textContent = "Ready to copy for the group chat.";
   $("[data-winner-card]").innerHTML = `
     ${cardMediaMarkup(winner, "winner-media")}
@@ -850,7 +873,7 @@ function renderLockedResults() {
   $("[data-result-topbar]").textContent = "Private result";
   $("[data-result-heading]").textContent = "Finish the deck to see the winner";
   $("[data-result-subheading]").textContent = "Peer votes stay hidden until you have made a choice on every card.";
-  $("[data-send-final]").innerHTML = `Finish voting <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
+  $("[data-send-final]").innerHTML = `Back to vote <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
   $("[data-winner-card]").innerHTML = `
     <div class="winner-body">
       <span class="domain">private result</span>
@@ -860,6 +883,25 @@ function renderLockedResults() {
   `;
   $("[data-backup-row]")?.classList.add("is-hidden");
   $("[data-send-status]").textContent = "Results open after your deck is complete";
+}
+
+function renderShareBanner() {
+  const banner = $("[data-share-banner]");
+  const privateRow = $("[data-private-row]");
+  if (!banner || !state.shortlist) {
+    if (banner) banner.classList.add("is-hidden");
+    if (privateRow) privateRow.classList.remove("is-hidden");
+    return;
+  }
+
+  if (state.showShareFlow) {
+    banner.classList.remove("is-hidden");
+    if (privateRow) privateRow.classList.add("is-hidden");
+    $("[data-share-url]").textContent = shareUrl();
+  } else {
+    banner.classList.add("is-hidden");
+    if (privateRow) privateRow.classList.remove("is-hidden");
+  }
 }
 
 function hasVotedLocally() {

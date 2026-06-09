@@ -975,6 +975,79 @@ button.code-pill:hover {
   font-weight: 800;
 }
 
+.share-banner {
+  display: grid;
+  gap: 10px;
+  margin: -4px -2px 22px;
+  padding: 16px;
+  border: 1px solid var(--green);
+  border-radius: var(--radius);
+  background: var(--green-soft);
+}
+
+.share-banner strong {
+  font-size: 1.02rem;
+  line-height: 1.2;
+}
+
+.share-banner p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.share-banner code {
+  display: block;
+  overflow: hidden;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  word-break: break-all;
+  user-select: all;
+}
+
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.share-copy {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: 0;
+  border-radius: var(--radius);
+  color: #fff;
+  background: var(--green);
+  font-size: 0.96rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.share-copy:hover {
+  background: #16643e;
+}
+
+.share-copy svg {
+  width: 18px;
+  height: 18px;
+}
+
+.share-copy:active {
+  transform: translateY(1px);
+}
+
 .is-hidden {
   display: none !important;
 }
