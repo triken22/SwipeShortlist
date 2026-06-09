@@ -82,12 +82,23 @@ export function migrate() {
   `);
 }
 
-export function createShortlist({ title = DEFAULT_TITLE, participants = [], deadlineLabel = DEFAULT_DEADLINE_LABEL, links = [] } = {}) {
+export function createShortlist({ title = DEFAULT_TITLE, participants = [], deadlineLabel = DEFAULT_DEADLINE_LABEL, links = [], cards = null } = {}) {
   const code = nextCode();
-  const normalizedLinks = normalizeLinks(links);
-  const cardsToCreate = cardsFromLinks(normalizedLinks);
-  if (!cardsToCreate.length) {
-    throw new Error("Paste at least one valid http or https link.");
+  let cardsToCreate;
+  if (Array.isArray(cards)) {
+    if (cards.length === 0) {
+      throw new Error("Each card needs a valid http or https source URL.");
+    }
+    cardsToCreate = cardsFromDraftCards(cards);
+    if (!cardsToCreate.length) {
+      throw new Error("Each card needs a valid http or https source URL.");
+    }
+  } else {
+    const normalizedLinks = normalizeLinks(links);
+    cardsToCreate = cardsFromLinks(normalizedLinks);
+    if (!cardsToCreate.length) {
+      throw new Error("Paste at least one valid http or https link.");
+    }
   }
 
   const participantNames = normalizeParticipants(participants);
@@ -258,11 +269,71 @@ export function getResults(code) {
     .sort((a, b) => b.score - a.score || a.sortOrder - b.sortOrder);
 
   const winner = rankedCards[0] || null;
+  const rationale = winner ? getWinnerRationale(rankedCards, shortlist) : null;
   return {
     shortlist,
     winner,
-    backups: rankedCards.slice(1, 3)
+    backups: rankedCards.slice(1, 3),
+    rationale
   };
+}
+
+function getWinnerRationale(rankedCards, shortlist) {
+  if (!rankedCards.length) return null;
+  const winner = rankedCards[0];
+  const runnerUp = rankedCards[1];
+
+  const totalVoters = shortlist.completedVoterCount || shortlist.voters.length || 1;
+  const vetoThreshold = Math.ceil(totalVoters / 2);
+  const hasVeto = winner.noCount >= vetoThreshold && winner.noCount > 0;
+  const tied = runnerUp && winner.score === runnerUp.score;
+  const isContested = winner.noCount > (winner.yesCount + winner.strongYesCount);
+
+  let summary, detail;
+  if (tied && runnerUp) {
+    summary = "split";
+    detail = `Tied between "${winner.title}" and "${runnerUp.title}" — needs group discussion`;
+  } else if (hasVeto) {
+    summary = "vetoed";
+    detail = `"${winner.title}" received ${winner.noCount} No — ${winner.noCount >= totalVoters ? "everyone" : "half of"} the group objects`;
+  } else if (isContested) {
+    summary = "contested";
+    detail = `"${winner.title}" has more No votes than positive votes — consider the backup options`;
+  } else {
+    const posCount = winner.yesCount + winner.strongYesCount;
+    summary = "clear";
+    detail = posCount > 0
+      ? `"${winner.title}" received ${posCount} positive vote${posCount !== 1 ? "s" : ""} and no strong objections`
+      : `"${winner.title}" had the weakest objections — no strong No signals`;
+  }
+
+  return {
+    summary,
+    detail,
+    noCount: winner.noCount,
+    yesCount: winner.yesCount + winner.strongYesCount,
+    holdCount: winner.holdCount,
+    hasBackup: !!runnerUp,
+    backupTitle: runnerUp?.title || null,
+    backupUrl: runnerUp?.sourceUrl || null,
+    tied: tied && !!runnerUp,
+    copyText: getCopyText(winner, runnerUp, summary)
+  };
+}
+
+function getCopyText(winner, runnerUp, summary) {
+  let text = `Final pick: ${winner.title}\n${winner.sourceUrl}`;
+  if (runnerUp && summary !== "split") {
+    text += `\n\nBackup: ${runnerUp.title}\n${runnerUp.sourceUrl}`;
+  } else if (summary === "split") {
+    text += `\n\n(Tied with ${runnerUp.title} — ${runnerUp.sourceUrl})`;
+  }
+  text += `\n\nDecided with SwipeShortlist`;
+  return text;
+}
+
+export function getWinnerRationalePublic(rankedCards, shortlist) {
+  return getWinnerRationale(rankedCards, shortlist);
 }
 
 function nextCode() {
@@ -305,6 +376,34 @@ function cardsFromLinks(links) {
           priceLabel: "Price to verify",
           facts: ["Imported link", "One-tap vote", "Needs check"],
           trustLabel: "Imported from pasted link · verify details before deciding",
+          imagePath: DEFAULT_CARD_IMAGE
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function cardsFromDraftCards(draftCards) {
+  return draftCards
+    .slice(0, MAX_LINKS)
+    .map((card) => {
+      try {
+        const url = new URL(card.sourceUrl);
+        if (!["http:", "https:"].includes(url.protocol)) return null;
+        const domain = url.hostname.replace(/^www\./, "");
+        const facts = Array.isArray(card.facts) ? card.facts.map((f) => String(f || "").trim()).filter(Boolean) : [];
+        return {
+          title: (card.title || titleFromUrl(url)).slice(0, 72),
+          sourceDomain: domain,
+          sourceUrl: url.toString(),
+          location: (card.location || domain).slice(0, 80),
+          priceLabel: (card.priceLabel || "Price to verify").slice(0, 40),
+          facts: facts.length > 0 ? facts.slice(0, 6) : ["Imported link", "Needs check"],
+          trustLabel: facts.length > 0
+            ? "Context from your pasted text · verify details before deciding"
+            : "Imported from pasted link · verify details before deciding",
           imagePath: DEFAULT_CARD_IMAGE
         };
       } catch {

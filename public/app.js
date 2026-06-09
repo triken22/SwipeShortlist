@@ -1,6 +1,7 @@
 const state = {
   shortlist: null,
   results: null,
+  draftCards: [],
   currentIndex: 0,
   votedCardIds: new Set(),
   voterKey: "",
@@ -46,11 +47,16 @@ function wireControls() {
     const input = $("[data-link-input]");
     try {
       const text = await navigator.clipboard?.readText();
+      if (!text) {
+        setStatus("Clipboard was empty. Paste links into the box.");
+        return;
+      }
       input.value = text || "";
       input.classList.remove("is-hidden");
-      const count = extractLinks(input.value).length;
-      renderPreview();
-      setStatus(count ? `${count} links pasted. Create the voting link when ready.` : "Clipboard did not contain links.");
+      state.draftCards = parseMessyText(text);
+      renderReviewCards();
+      const count = state.draftCards.filter(c => c.isValid).length;
+      setStatus(count ? `${count} option${count !== 1 ? "s" : ""} extracted. Review and create the voting link.` : "Paste at least one full http or https link.");
     } catch {
       input.classList.remove("is-hidden");
       input.focus();
@@ -59,10 +65,11 @@ function wireControls() {
   });
 
   $("[data-link-input]")?.addEventListener("input", () => {
-    renderPreview();
-    const count = linksFromInput().length;
+    state.draftCards = parseMessyText($("[data-link-input]")?.value || "");
+    renderReviewCards();
+    const count = state.draftCards.filter(c => c.isValid).length;
     if (count) {
-      setStatus(`${count} ${count === 1 ? "link is" : "links are"} ready to import.`);
+      setStatus(`${count} option${count !== 1 ? "s" : ""} extracted. Review and create the voting link.`);
     } else {
       setStatus("Paste at least one full http or https link.");
     }
@@ -74,15 +81,39 @@ function wireControls() {
     input?.focus();
   });
 
+  $("[data-review-list]")?.addEventListener("input", (event) => {
+    const target = event.target;
+    const index = Number(target.dataset?.cardIndex);
+    const field = target.dataset?.cardField;
+    if (isNaN(index) || !field || index >= state.draftCards.length) return;
+    if (field === "facts") {
+      state.draftCards[index].facts = target.value.split("\n").map((f) => f.trim()).filter(Boolean);
+    } else {
+      state.draftCards[index][field] = target.value;
+    }
+    updateCreateActions(state.draftCards.filter((c) => c.isValid).length > 0);
+  });
+
+  $("[data-review-list]")?.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-remove-card]");
+    if (!remove) return;
+    const index = Number(remove.dataset.removeCard);
+    if (isNaN(index) || index >= state.draftCards.length) return;
+    state.draftCards.splice(index, 1);
+    renderReviewCards();
+    const remaining = state.draftCards.filter((c) => c.isValid).length;
+    setStatus(remaining ? `Removed. ${remaining} option${remaining !== 1 ? "s" : ""} remaining.` : "No options left. Paste links to add more.");
+  });
+
   $$("[data-create-shortlist]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const links = linksFromInput();
-      if (!links.length) {
+      const cards = draftCardsFromState();
+      if (!cards.length) {
         const input = $("[data-link-input]");
         input?.classList.remove("is-hidden");
         input?.focus();
-        setStatus("Paste at least one full http or https link first.");
-        renderPreview();
+        setStatus("Paste at least one valid http or https link first.");
+        renderReviewCards();
         return;
       }
 
@@ -91,8 +122,9 @@ function wireControls() {
       try {
         state.shortlist = await api("/api/shortlists", {
           method: "POST",
-          body: JSON.stringify({ links })
+          body: JSON.stringify({ cards })
         });
+        state.draftCards = [];
         state.results = null;
         state.currentIndex = 0;
         state.votedCardIds.clear();
@@ -101,13 +133,13 @@ function wireControls() {
         localStorage.setItem("swipe-shortlist-last-code", state.shortlist.code);
         saveLocalVotes();
         renderAll();
-        setStatus(`Imported ${links.length} ${links.length === 1 ? "link" : "links"}. Private link ready: ${shareUrl()}`);
+        setStatus(`Created with ${cards.length} option${cards.length !== 1 ? "s" : ""}. Private link ready: ${shareUrl()}`);
         location.hash = routeHash("vote");
       } catch (error) {
         console.error(error);
         setStatus(error.message.includes("400") ? "Paste at least one valid http or https link." : "Could not create the link. Try again.");
       } finally {
-        renderPreview();
+        renderReviewCards();
       }
     });
   });
@@ -154,8 +186,7 @@ function wireControls() {
       renderLockedResults();
       return;
     }
-    const winner = loaded.winner;
-    const text = `${winner.title} is the final pick: ${winner.sourceUrl}`;
+    const text = loaded.rationale?.copyText || `${loaded.winner.title} is the final pick: ${loaded.winner.sourceUrl}`;
     try {
       await navigator.clipboard?.writeText(text);
       $("[data-send-status]").textContent = "Final pick copied for the group chat.";
@@ -174,7 +205,7 @@ function renderAll() {
     node.textContent = state.shortlist?.title || DEFAULT_TITLE;
   });
   renderIdentity();
-  renderPreview();
+  renderReviewCards();
   renderVoters();
   renderVoteContext();
   renderCurrentCard();
@@ -305,6 +336,7 @@ async function renderResults() {
   }
   const winner = state.results?.winner;
   if (!winner) return;
+  const rationale = state.results?.rationale;
   const voteMarkup = winner.votes?.length
     ? `<div class="voter-result-row">${winner.votes
         .map(
@@ -318,10 +350,15 @@ async function renderResults() {
         .join("")}</div>`
     : "";
 
-  $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg> Voting complete`;
-  $("[data-result-topbar]").textContent = "Voting complete";
-  $("[data-result-heading]").textContent = `${winner.title} wins`;
-  $("[data-result-subheading]").textContent = "Everyone can live with this pick. Send it and stop the thread.";
+  const rationaleClass = rationale?.tied ? "is-tied" : rationale?.summary === "vetoed" ? "is-vetoed" : rationale?.summary === "contested" ? "is-contested" : "";
+  const stateIcon = rationale?.tied
+    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01"/><path d="M12 4v12"/></svg> Split result`
+    : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7"/></svg> Voting complete`;
+
+  $("[data-result-state]").innerHTML = stateIcon;
+  $("[data-result-topbar]").textContent = rationale?.tied ? "Split result" : "Voting complete";
+  $("[data-result-heading]").textContent = `${winner.title} ${rationale?.tied ? "is top (tied)" : "wins"}`;
+  $("[data-result-subheading]").textContent = rationale?.detail || "Everyone can live with this pick. Send it and stop the thread.";
   $("[data-send-final]").innerHTML = `Send final pick <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.5 18-4-8.5L1 8.5 21 3Z" /></svg>`;
   $("[data-send-status]").textContent = "Ready to copy for the group chat.";
   $("[data-winner-card]").innerHTML = `
@@ -335,10 +372,13 @@ async function renderResults() {
         ${escapeHtml(winner.location)}
       </span>
       ${voteMarkup}
-      <div class="score-row">
+      <div class="score-row ${rationaleClass}">
         <span class="score"><strong>${winner.yesCount}</strong><span>yes</span></span>
         <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
         <span class="score"><strong>${winner.noCount}</strong><span>no</span></span>
+      </div>
+      <div class="rationale-box">
+        <p>${escapeHtml(rationale?.detail || "")}</p>
       </div>
       <a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
         Open final link
@@ -347,6 +387,11 @@ async function renderResults() {
     </div>
   `;
   $("[data-backup-row]")?.classList.toggle("is-hidden", !state.results?.backups?.length);
+  if (state.results?.backups?.length) {
+    const backup = state.results.backups[0];
+    $("[data-backup-row]").innerHTML = `Backup: ${escapeHtml(backup.title)} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
+    $("[data-backup-row]").dataset.note = `Backup: ${backup.title} — ${backup.sourceUrl}`;
+  }
 }
 
 async function loadResults() {
@@ -620,6 +665,175 @@ function titleFromUrl(url) {
   const raw = pathBits.at(-1) || sourceDomain(url);
   const title = raw.replace(/[-_+]+/g, " ").replace(/\s+/g, " ").trim();
   return title ? title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72) : "Imported link";
+}
+
+function parseMessyText(text) {
+  if (!text || !text.trim()) return [];
+  const lines = text.split("\n");
+  const seenUrls = new Set();
+  const result = [];
+
+  const rawUrls = Array.from(new Set(
+    (text.match(/https?:\/\/[^\s<>"']+/g) || [])
+      .map((u) => u.replace(/[),.;]+$/g, ""))
+  ));
+
+  for (const urlStr of rawUrls) {
+    if (seenUrls.has(urlStr)) continue;
+    seenUrls.add(urlStr);
+
+    try {
+      const url = new URL(urlStr);
+      if (!["http:", "https:"].includes(url.protocol)) continue;
+      const domain = url.hostname.replace(/^www\./, "");
+
+      let lineIndex = -1;
+      let contextLine = "";
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(urlStr)) {
+          contextLine = lines[i];
+          lineIndex = i;
+          break;
+        }
+      }
+
+      const textBeforeLine = lineIndex > 0 ? lines[lineIndex - 1].trim() : "";
+      const textAfterLine = lineIndex < lines.length - 1 ? lines[lineIndex + 1].trim() : "";
+      const urlPos = contextLine.indexOf(urlStr);
+      const beforeOnLine = contextLine.substring(0, urlPos).replace(/[-,;:.]*\s*$/, "").trim();
+      const afterOnLine = contextLine.substring(urlPos + urlStr.length).trim();
+
+      const nearbyText = [textBeforeLine, contextLine, textAfterLine].filter(Boolean).join(" ");
+      const priceRegex = /\$?\d+(?:[.,]\d+)?(?:\s*(?:USD|EUR|GBP))?(?:\s*\/\s*(?:night|person|week|total))?/gi;
+      const sameLinePrices = [...contextLine.matchAll(priceRegex)];
+      const allPrices = [...nearbyText.matchAll(priceRegex)];
+      const priceText = sameLinePrices.length > 0
+        ? sameLinePrices[0][0].trim()
+        : allPrices.length > 0
+          ? allPrices[0][0].trim()
+          : "";
+
+      let title = "";
+      if (beforeOnLine && !beforeOnLine.match(/^https?:\/\//)) {
+        title = beforeOnLine.replace(/^[-\s]*/, "").replace(/[-,;]*$/, "").trim();
+      }
+      if (!title && textBeforeLine && !textBeforeLine.match(/https?:\/\//) && textBeforeLine.length < 80) {
+        title = textBeforeLine;
+      }
+      title = title || titleFromUrl(url);
+
+      let location = domain;
+      const locMatch = nearbyText.match(/\b(?:in|at|near|around)\s+([A-Z][a-zA-Z\s-]{2,30}?)(?:\s*[,.\n]|$)/);
+      if (locMatch) location = locMatch[1].trim();
+
+      const facts = [];
+      if (priceText) facts.push(`${priceText} from pasted text`);
+      if (afterOnLine && !afterOnLine.match(/^https?:\/\//)) {
+        const fragments = afterOnLine.replace(/^[-\s,;]*/, "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+        for (const f of fragments.slice(0, 3)) {
+          if (f.length > 3 && f.length < 80) facts.push(f);
+        }
+      }
+      if (textBeforeLine && textBeforeLine !== title && !textBeforeLine.match(/https?:\/\//) && textBeforeLine.length < 100) {
+        facts.push(textBeforeLine);
+      }
+
+      result.push({
+        sourceUrl: url.toString(),
+        title: typeof title === "string" ? title.slice(0, 72) : title,
+        priceLabel: priceText || "Price to verify",
+        location: location.slice(0, 80),
+        facts: [...new Set(facts)].slice(0, 4),
+        isValid: true,
+        isDuplicate: false
+      });
+    } catch {
+      /* skip unparseable */
+    }
+  }
+
+  const urlCount = new Map();
+  result.forEach((card) => urlCount.set(card.sourceUrl, (urlCount.get(card.sourceUrl) || 0) + 1));
+  result.forEach((card) => {
+    if ((urlCount.get(card.sourceUrl) || 0) > 1) card.isDuplicate = true;
+  });
+  return result;
+}
+
+function draftCardsFromState() {
+  return state.draftCards.filter((c) => c.isValid).map((c) => ({
+    sourceUrl: c.sourceUrl,
+    title: c.title || "",
+    priceLabel: c.priceLabel || "Price to verify",
+    location: c.location || "",
+    facts: Array.isArray(c.facts) ? c.facts.map((f) => String(f || "").trim()).filter(Boolean) : []
+  }));
+}
+
+function renderReviewCards() {
+  const list = $("[data-review-list]");
+  const panel = $("[data-review-panel]");
+  const cards = state.draftCards || [];
+  const validCards = cards.filter((c) => c.isValid);
+
+  if (!panel) {
+    renderPreview();
+    return;
+  }
+
+  const hasContent = cards.length > 0;
+  panel.classList.toggle("is-hidden", !hasContent);
+  $("[data-found-panel]")?.classList.toggle("is-hidden", hasContent);
+
+  $("[data-found-count]").textContent = hasContent
+    ? `${validCards.length} option${validCards.length !== 1 ? "s" : ""} ready — edit then create`
+    : "Paste links to create cards";
+  $("[data-found-note]").textContent = hasContent
+    ? "Edit details so voters have enough context to decide without reopening the chat."
+    : "Nothing is stored until you create a private voting link.";
+
+  if (!hasContent) {
+    list.innerHTML = "";
+    updateCreateActions(false);
+    return;
+  }
+
+  list.innerHTML = cards.map((card, index) => `
+    <article class="review-card" data-review-index="${index}">
+      <div class="review-card-header">
+        <span class="review-index">${index + 1}</span>
+        ${card.isDuplicate ? '<span class="review-warning">Duplicate URL</span>' : ""}
+        ${!card.isValid ? '<span class="review-warning is-error">Invalid link</span>' : ""}
+        <button class="review-remove" data-remove-card="${index}" aria-label="Remove this option">✕</button>
+      </div>
+      <label class="review-field">
+        <span>Title</span>
+        <input type="text" data-card-field="title" data-card-index="${index}" value="${escapeAttr(card.title)}" maxlength="72" />
+      </label>
+      <label class="review-field">
+        <span>Price / Status</span>
+        <input type="text" data-card-field="priceLabel" data-card-index="${index}" value="${escapeAttr(card.priceLabel)}" maxlength="40" />
+      </label>
+      <label class="review-field">
+        <span>Location / Source context</span>
+        <input type="text" data-card-field="location" data-card-index="${index}" value="${escapeAttr(card.location)}" maxlength="80" />
+      </label>
+      <label class="review-field">
+        <span>Facts (one per line)</span>
+        <textarea data-card-field="facts" data-card-index="${index}" rows="2" maxlength="300">${escapeAttr(Array.isArray(card.facts) ? card.facts.join("\n") : "")}</textarea>
+      </label>
+      <div class="review-source-row">
+        <a class="review-source" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">Open source</a>
+        <span class="review-domain">${escapeHtml(domainFromUrl(card.sourceUrl))}</span>
+      </div>
+    </article>
+  `).join("");
+
+  updateCreateActions(validCards.length > 0);
+}
+
+function domainFromUrl(urlStr) {
+  try { return new URL(urlStr).hostname.replace(/^www\./, ""); } catch { return ""; }
 }
 
 function renderLockedResults() {

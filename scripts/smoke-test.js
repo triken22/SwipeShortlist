@@ -73,7 +73,44 @@ await request(`/api/shortlists/${encodeURIComponent(created.code)}/votes`, {
 const afterUndo = await request(`/api/shortlists/${encodeURIComponent(created.code)}/results?voterKey=${encodeURIComponent(voterKey)}&voterName=You`);
 assert(afterUndo.locked === true, "undoing a completed deck locks results again");
 
-console.log(`smoke ok: ${created.code} winner=${results.winner.title}`);
+const voterKey2 = `smoke-${Date.now()}-2`;
+
+const structuredCreated = await request("/api/shortlists", {
+  method: "POST",
+  body: JSON.stringify({
+    cards: [
+      { sourceUrl: "https://example.org/bali-resort", title: "Bali Beach Resort", priceLabel: "$150/night", location: "Bali, Indonesia", facts: ["Beachfront", "Pool", "Breakfast included"] },
+      { sourceUrl: "https://example.net/ubud-inn", title: "Ubud Garden Inn", priceLabel: "$85/night", location: "Ubud, Bali", facts: ["Rice terrace view"] }
+    ]
+  })
+});
+assert(structuredCreated.code, "structured cards create shortlist with a code");
+assert(structuredCreated.cards[0].title === "Bali Beach Resort", "structured card title is preserved");
+assert(structuredCreated.cards[0].priceLabel === "$150/night", "structured card price is preserved");
+assert(structuredCreated.cards[0].location === "Bali, Indonesia", "structured card location is preserved");
+assert(structuredCreated.cards[0].facts.length === 3, "structured card facts are preserved");
+assert(structuredCreated.cards[0].facts[0] === "Beachfront", "first fact is preserved");
+
+for (const card of structuredCreated.cards) {
+  await request(`/api/shortlists/${encodeURIComponent(structuredCreated.code)}/votes`, {
+    method: "POST",
+    body: JSON.stringify({
+      cardId: card.id,
+      voterKey: voterKey2,
+      voterName: "You",
+      vote: "yes"
+    })
+  });
+}
+
+const withRationale = await request(`/api/shortlists/${encodeURIComponent(structuredCreated.code)}/results?voterKey=${encodeURIComponent(voterKey2)}&voterName=You`);
+assert(withRationale.rationale?.detail, "results include rationale detail");
+assert(withRationale.rationale?.summary, "results include rationale summary");
+assert(withRationale.rationale?.copyText, "results include copy-ready text");
+assert(withRationale.rationale?.copyText.includes("Bali Beach Resort"), "copy text includes the winner title");
+assert(withRationale.rationale?.hasBackup === true, "rationale indicates backup availability");
+
+console.log(`smoke ok: ${created.code} winner=${results.winner.title} | structured=${structuredCreated.code} rationale=${withRationale.rationale.summary}`);
 
 async function request(path, options = {}) {
   const response = await requestRaw(path, options);

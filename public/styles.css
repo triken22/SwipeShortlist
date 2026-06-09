@@ -975,9 +975,182 @@ button.code-pill:hover {
   font-weight: 800;
 }
 
-.is-hidden {
-  display: none !important;
+.review-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-top: 18px;
+  padding: 16px;
+  background: #fff;
+  box-shadow: var(--shadow);
 }
+
+.review-list {
+  display: grid;
+  gap: 16px;
+  padding-top: 14px;
+}
+
+.review-card {
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.review-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.review-index {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.review-warning {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 0.72rem;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.review-warning.is-error {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.review-remove {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  background: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.review-remove:hover {
+  border-color: var(--red);
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.review-field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.review-field span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 740;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.review-field input,
+.review-field textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: #fff;
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
+.review-field input:focus,
+.review-field textarea:focus {
+  border-color: var(--green);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(31, 122, 77, 0.15);
+}
+
+.review-field textarea {
+  min-height: 50px;
+  resize: vertical;
+}
+
+.review-source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.review-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.review-source:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
+
+.review-domain {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 720;
+}
+
+.rationale-box {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--soft);
+  font-size: 0.88rem;
+  line-height: 1.25;
+  color: #2d2b28;
+}
+
+.rationale-box p {
+  margin: 0;
+}
+
+.score-row.is-tied .score:first-child,
+.score-row.is-tied .score:nth-child(2) {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.score-row.is-vetoed .score:last-child {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.score-row.is-contested .score:first-child,
+.score-row.is-contested .score:last-child {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+
 
 @media (min-width: 760px) {
   .shell {

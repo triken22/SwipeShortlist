@@ -25,7 +25,8 @@ const server = createServer(async (req, res) => {
         title: body.title,
         participants: Array.isArray(body.participants) ? body.participants : [],
         deadlineLabel: body.deadlineLabel,
-        links: body.links || []
+        links: body.links || [],
+        cards: Array.isArray(body.cards) ? body.cards : null
       });
       return json(res, 201, shortlist);
     }
@@ -94,7 +95,8 @@ const server = createServer(async (req, res) => {
     if (
       error.message === "Unknown voter" ||
       error.message === "Unknown card" ||
-      error.message === "Paste at least one valid http or https link."
+      error.message === "Paste at least one valid http or https link." ||
+      error.message === "Each card needs a valid http or https source URL."
     ) {
       return json(res, 400, { error: error.message });
     }

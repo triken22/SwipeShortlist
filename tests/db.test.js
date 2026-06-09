@@ -137,6 +137,35 @@ test("omitted voter key cannot act as an existing keyed voter", async () => {
   }
 });
 
+test("creates shortlist from structured draft cards with user-edited context", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-draft-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=draft-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const cards = [
+      { sourceUrl: "https://example.org/bali-resort", title: "Bali Beach Resort", priceLabel: "$150/night", location: "Bali, Indonesia", facts: ["Beachfront", "Pool", "Breakfast included"] },
+      { sourceUrl: "https://example.net/ubud-inn", title: "Ubud Garden Inn", priceLabel: "$85/night", location: "Ubud, Bali", facts: ["Rice terrace view"] }
+    ];
+    const shortlist = dbModule.createShortlist({ title: "Bali Trip", cards });
+    assert.equal(shortlist.cards.length, 2);
+    assert.equal(shortlist.cards[0].title, "Bali Beach Resort");
+    assert.equal(shortlist.cards[0].priceLabel, "$150/night");
+    assert.equal(shortlist.cards[0].location, "Bali, Indonesia");
+    assert.deepEqual(shortlist.cards[0].facts, ["Beachfront", "Pool", "Breakfast included"]);
+    assert.match(shortlist.cards[0].trustLabel, /pasted text/);
+    assert.equal(shortlist.cards[1].title, "Ubud Garden Inn");
+    assert.equal(shortlist.cards[1].priceLabel, "$85/night");
+    assert.equal(shortlist.cards[1].location, "Ubud, Bali");
+    assert.deepEqual(shortlist.cards[1].facts, ["Rice terrace view"]);
+    assert.match(shortlist.code, /^FAMILY-\d{6}$/);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("empty cleaned voter keys are treated as absent", async () => {
   const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-empty-key-"));
   process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
@@ -166,6 +195,172 @@ test("empty cleaned voter keys are treated as absent", async () => {
     });
 
     assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterName: "You" }), true);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("rejects empty cards array", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-empty-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=empty-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    assert.throws(() => dbModule.createShortlist({ cards: [] }), /valid http or https source URL/);
+    assert.throws(() => dbModule.createShortlist({ cards: [{ sourceUrl: "not-a-url" }] }), /valid http or https source URL/);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("generates clear winner rationale", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-rationale-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=rationale-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      cards: [
+        { sourceUrl: "https://example.org/a" },
+        { sourceUrl: "https://example.org/b" }
+      ]
+    });
+
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "voter1", voterName: "You", vote: "yes" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "voter2", voterName: "You 2", vote: "yes" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "voter1", voterName: "You", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "voter2", voterName: "You 2", vote: "hold" });
+
+    const results = dbModule.getResults(shortlist.code);
+    assert.equal(results.rationale.summary, "clear");
+    assert.match(results.rationale.detail, /positive/);
+    assert.equal(results.rationale.noCount, 0);
+    assert.equal(results.rationale.yesCount, 2);
+    assert.equal(results.rationale.hasBackup, true);
+    assert.match(results.rationale.copyText, /Final pick/);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("detects tie in rationale", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-tie-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=tie-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      cards: [
+        { sourceUrl: "https://example.org/a" },
+        { sourceUrl: "https://example.org/b" }
+      ]
+    });
+
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "voter1", voterName: "You", vote: "yes" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "voter1", voterName: "You", vote: "yes" });
+
+    const results = dbModule.getResults(shortlist.code);
+    assert.equal(results.rationale.tied, true);
+    assert.equal(results.rationale.summary, "split");
+    assert.match(results.rationale.detail, /Tied/);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("detects veto in rationale when half or more vote no on winner", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-veto-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=veto-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      cards: [
+        { sourceUrl: "https://example.org/a" },
+        { sourceUrl: "https://example.org/b" }
+      ]
+    });
+
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "voter1", voterName: "You", vote: "yes" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "voter2", voterName: "You 2", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "voter1", voterName: "You", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "voter2", voterName: "You 2", vote: "hold" });
+
+    const results = dbModule.getResults(shortlist.code);
+    assert.equal(results.rationale.summary, "vetoed");
+    assert.match(results.rationale.detail, /No/);
+    assert.equal(results.rationale.noCount, 1);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("detects contested winner when no exceeds positive but below veto threshold", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-contested-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=contested-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      cards: [
+        { sourceUrl: "https://example.org/a" },
+        { sourceUrl: "https://example.org/b" }
+      ]
+    });
+
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "v1", voterName: "V1", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "v2", voterName: "V2", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "v3", voterName: "V3", vote: "yes" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "v4", voterName: "V4", vote: "hold" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "v5", voterName: "V5", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "v1", voterName: "V1", vote: "yes" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "v2", voterName: "V2", vote: "hold" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "v3", voterName: "V3", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "v4", voterName: "V4", vote: "no" });
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "v5", voterName: "V5", vote: "hold" });
+
+    const results = dbModule.getResults(shortlist.code);
+    assert.equal(results.rationale.summary, "contested");
+    assert.match(results.rationale.detail, /more No/);
+    assert.equal(results.rationale.noCount, 2);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("locks results until voter completes all cards", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-lock-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=lock-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      cards: [
+        { sourceUrl: "https://example.org/a" },
+        { sourceUrl: "https://example.org/b" },
+        { sourceUrl: "https://example.org/c" }
+      ]
+    });
+
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterKey: "voter1" }), false);
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[0].id, voterKey: "voter1", voterName: "You", vote: "yes" });
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterKey: "voter1" }), false);
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[1].id, voterKey: "voter1", voterName: "You", vote: "yes" });
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterKey: "voter1" }), false);
+    dbModule.recordVote({ code: shortlist.code, cardId: shortlist.cards[2].id, voterKey: "voter1", voterName: "You", vote: "yes" });
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterKey: "voter1" }), true);
   } finally {
     dbModule.db.close();
     rmSync(temp, { recursive: true, force: true });
