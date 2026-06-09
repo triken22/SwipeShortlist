@@ -43,26 +43,34 @@ const server = createServer(async (req, res) => {
       if (!["yes", "no", "hold", "strong_yes"].includes(body.vote)) {
         return json(res, 400, { error: "Invalid vote" });
       }
-      const results = recordVote({
-        code: decodeURIComponent(voteMatch[1]),
-        cardId: Number(body.cardId),
+      const code = decodeURIComponent(voteMatch[1]);
+      const voter = {
         voterKey: body.voterKey,
-        voterName: body.voterName || "Guest",
+        voterName: body.voterName || "Guest"
+      };
+      const results = recordVote({
+        code,
+        cardId: Number(body.cardId),
+        ...voter,
         vote: body.vote
       });
-      return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
+      return results ? json(res, 200, voteResponsePayload(code, voter)) : json(res, 404, { error: "Shortlist not found" });
     }
 
     if (req.method === "DELETE" && voteMatch) {
       const body = await readJson(req);
       if (body.error) return json(res, 400, { error: body.error });
-      const results = deleteVote({
-        code: decodeURIComponent(voteMatch[1]),
-        cardId: Number(body.cardId),
+      const code = decodeURIComponent(voteMatch[1]);
+      const voter = {
         voterKey: body.voterKey,
         voterName: body.voterName || "Guest"
+      };
+      const results = deleteVote({
+        code,
+        cardId: Number(body.cardId),
+        ...voter
       });
-      return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
+      return results ? json(res, 200, voteResponsePayload(code, voter)) : json(res, 404, { error: "Shortlist not found" });
     }
 
     const resultMatch = url.pathname.match(/^\/api\/shortlists\/([^/]+)\/results$/);
@@ -107,6 +115,17 @@ function json(res, status, payload) {
     ...securityHeaders()
   });
   res.end(body);
+}
+
+function voteResponsePayload(code, voter) {
+  if (hasVoterCompleted(code, voter)) {
+    return getResults(code);
+  }
+
+  const shortlist = getShortlist(code);
+  return shortlist
+    ? { locked: true, error: "Finish voting before results", shortlist }
+    : null;
 }
 
 async function readJson(req) {

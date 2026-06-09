@@ -93,3 +93,81 @@ test("imports pasted links as votable cards without fake price certainty", async
     rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("omitted voter key cannot act as an existing keyed voter", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-keyed-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=keyed-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      links: ["https://example.org/family-hotel", "https://example.net/beach-apartment"]
+    });
+
+    dbModule.recordVote({
+      code: shortlist.code,
+      cardId: shortlist.cards[0].id,
+      voterKey: "real-browser-key",
+      voterName: "You",
+      vote: "yes"
+    });
+
+    dbModule.recordVote({
+      code: shortlist.code,
+      cardId: shortlist.cards[1].id,
+      voterName: "You",
+      vote: "no"
+    });
+
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterKey: "real-browser-key", voterName: "You" }), false);
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterName: "You" }), false);
+
+    const voters = dbModule.getResults(shortlist.code).shortlist.voters.map((voter) => ({
+      name: voter.name,
+      isOwner: voter.isOwner
+    }));
+    assert.deepEqual(voters, [
+      { name: "You", isOwner: false },
+      { name: "You 2", isOwner: false }
+    ]);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("empty cleaned voter keys are treated as absent", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-empty-key-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=empty-key-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      links: ["https://example.org/family-hotel", "https://example.net/beach-apartment"]
+    });
+
+    assert.doesNotThrow(() => {
+      dbModule.recordVote({
+        code: shortlist.code,
+        cardId: shortlist.cards[0].id,
+        voterKey: "!!!",
+        voterName: "You",
+        vote: "yes"
+      });
+      dbModule.recordVote({
+        code: shortlist.code,
+        cardId: shortlist.cards[1].id,
+        voterKey: "...",
+        voterName: "You",
+        vote: "hold"
+      });
+    });
+
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterName: "You" }), true);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});

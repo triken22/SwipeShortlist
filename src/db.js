@@ -392,8 +392,8 @@ function ensureVoter(shortlistId, voter) {
   const existing = findVoter(shortlistId, voter);
   if (existing) return existing;
 
-  const voterKey = cleanVoterKey(voter.voterKey || `name:${voter.voterName || "Guest"}`);
   const name = uniqueVoterName(shortlistId, cleanVoterName(voter.voterName));
+  const voterKey = cleanVoterKey(voter.voterKey || "") || fallbackVoterKey(name);
   const result = db
     .prepare("INSERT INTO voters (shortlist_id, voter_key, name, initials, is_owner) VALUES (?, ?, ?, ?, 0)")
     .run(shortlistId, voterKey, name, initialsFor(name));
@@ -408,9 +408,22 @@ function findVoter(shortlistId, voter) {
     return null;
   }
 
-  const voterName = cleanVoterName(voter.voterName || "");
-  if (!voterName) return null;
-  return db.prepare("SELECT * FROM voters WHERE shortlist_id = ? AND lower(name) = lower(?)").get(shortlistId, voterName);
+  const rawName = String(voter.voterName || "").trim();
+  if (!rawName) return null;
+
+  const fallbackKey = fallbackVoterKey(cleanVoterName(rawName));
+  const byFallbackKey = db.prepare("SELECT * FROM voters WHERE shortlist_id = ? AND voter_key = ?").get(shortlistId, fallbackKey);
+  if (byFallbackKey) return byFallbackKey;
+
+  return db
+    .prepare(
+      `SELECT *
+       FROM voters
+       WHERE shortlist_id = ?
+         AND lower(name) = lower(?)
+         AND (voter_key IS NULL OR voter_key = '' OR voter_key LIKE 'legacy-%')`
+    )
+    .get(shortlistId, cleanVoterName(rawName));
 }
 
 function cleanTitle(title) {
@@ -429,10 +442,15 @@ function cleanVoterName(name) {
 }
 
 function cleanVoterKey(key) {
-  return String(key || "")
+  const clean = String(key || "")
     .trim()
     .replace(/[^a-zA-Z0-9:._-]/g, "")
     .slice(0, 80);
+  return /[a-zA-Z0-9]/.test(clean) ? clean : "";
+}
+
+function fallbackVoterKey(name) {
+  return cleanVoterKey(`name:${cleanVoterName(name)}`) || "name:Guest";
 }
 
 function normalizeParticipants(participants) {

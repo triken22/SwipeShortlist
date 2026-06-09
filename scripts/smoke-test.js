@@ -28,7 +28,7 @@ assert(loaded.title === "Private shortlist", "loaded shortlist title matches");
 const lockedBeforeVote = await request(`/api/shortlists/${encodeURIComponent(created.code)}/results?voterKey=${encodeURIComponent(voterKey)}&voterName=You`);
 assert(lockedBeforeVote.locked === true, "results are locked before this user votes");
 
-await request(`/api/shortlists/${encodeURIComponent(created.code)}/votes`, {
+const partialVoteResponse = await request(`/api/shortlists/${encodeURIComponent(created.code)}/votes`, {
   method: "POST",
   body: JSON.stringify({
     cardId: loaded.cards[0].id,
@@ -37,6 +37,9 @@ await request(`/api/shortlists/${encodeURIComponent(created.code)}/votes`, {
     vote: "no"
   })
 });
+assert(partialVoteResponse.locked === true, "partial vote response does not expose results");
+assert(!partialVoteResponse.winner, "partial vote response hides winner payload");
+assert(partialVoteResponse.shortlist?.cards?.length === 3, "partial vote response keeps safe shortlist progress");
 
 const lockedAfterPartialVote = await request(`/api/shortlists/${encodeURIComponent(created.code)}/results?voterKey=${encodeURIComponent(voterKey)}&voterName=You`);
 assert(lockedAfterPartialVote.locked === true, "results stay locked until this user completes the deck");
