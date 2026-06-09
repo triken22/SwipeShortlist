@@ -1,4 +1,6 @@
 import { lookup as dnsLookup } from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
 import { isIP } from "node:net";
 
 const FETCH_TIMEOUT_MS = 4000;
@@ -59,8 +61,8 @@ export function isPrivateIPv6(ip) {
     if ((firstHextet & 0xff00) === 0xff00) return true;
     if (firstHextet === 0x2001 && lower.startsWith("2001:db8")) return true;
   }
-  const v4match = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (v4match) return isPrivateIPv4(v4match[1]);
+  const mappedIPv4 = mappedIPv4FromIPv6(lower);
+  if (mappedIPv4) return isPrivateIPv4(mappedIPv4);
   return false;
 }
 
@@ -71,26 +73,33 @@ export function isPrivateIP(ip) {
 }
 
 export async function isSafeUrl(urlStr) {
+  return Boolean(await safeUrlTarget(urlStr));
+}
+
+async function safeUrlTarget(urlStr) {
   let url;
   try {
     url = new URL(urlStr);
   } catch {
-    return false;
+    return null;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
 
   const hostname = url.hostname;
-  if (isIP(hostname)) return !isPrivateIP(hostname);
+  if (isIP(hostname)) {
+    return isPrivateIP(hostname) ? null : { url, address: hostname };
+  }
 
   try {
     const addresses = await dnsLookup(hostname, { all: true });
-    if (!addresses || addresses.length === 0) return false;
+    if (!addresses || addresses.length === 0) return null;
     for (const addr of addresses) {
-      if (isPrivateIP(typeof addr === "string" ? addr : addr.address)) return false;
+      if (isPrivateIP(typeof addr === "string" ? addr : addr.address)) return null;
     }
-    return true;
+    const first = addresses[0];
+    return { url, address: typeof first === "string" ? first : first.address };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -152,24 +161,29 @@ function decodeHtmlEntities(value) {
 export async function fetchMetadata(urlStr, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const safeUrl = options.isSafe || isSafeUrl;
+  const useInjectedFetch = Boolean(options.fetchImpl);
   let currentUrl = urlStr;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    if (!(await safeUrl(currentUrl))) return null;
+    const target = useInjectedFetch ? null : await safeUrlTarget(currentUrl);
+    if (useInjectedFetch) {
+      if (!(await safeUrl(currentUrl))) return null;
+    } else if (!target) {
+      return null;
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     let response;
 
     try {
-      response = await fetchImpl(currentUrl, {
-        signal: controller.signal,
-        redirect: "manual",
-        headers: {
-          "user-agent": "SwipeShortlist/1.0",
-          accept: "text/html, application/xhtml+xml",
-        },
-      });
+      response = useInjectedFetch
+        ? await fetchImpl(currentUrl, {
+            signal: controller.signal,
+            redirect: "manual",
+            headers: requestHeadersFor(new URL(currentUrl)),
+          })
+        : await fetchPinnedTarget(target, controller.signal);
     } catch {
       return null;
     } finally {
@@ -219,6 +233,65 @@ export async function fetchMetadata(urlStr, options = {}) {
   }
 
   return null;
+}
+
+function mappedIPv4FromIPv6(lower) {
+  const dotted = lower.match(/^(?:::ffff:|0:0:0:0:0:ffff:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) return dotted[1];
+
+  const hex = lower.match(/^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (!hex) return "";
+  const high = parseInt(hex[1], 16);
+  const low = parseInt(hex[2], 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+
+function requestHeadersFor(url) {
+  return {
+    host: url.host,
+    "user-agent": "SwipeShortlist/1.0",
+    accept: "text/html, application/xhtml+xml",
+  };
+}
+
+function fetchPinnedTarget(target, signal) {
+  const { url, address } = target;
+  const isHttps = url.protocol === "https:";
+  const transport = isHttps ? https : http;
+  const port = url.port || (isHttps ? 443 : 80);
+
+  return new Promise((resolve, reject) => {
+    const req = transport.request(
+      {
+        hostname: address,
+        port,
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        headers: requestHeadersFor(url),
+        servername: url.hostname,
+        family: isIP(address) === 6 ? 6 : 4,
+      },
+      (res) => {
+        resolve({
+          status: res.statusCode || 0,
+          headers: {
+            get(name) {
+              const value = res.headers[String(name).toLowerCase()];
+              if (Array.isArray(value)) return value.join(", ");
+              return value || null;
+            },
+          },
+          body: res,
+        });
+      }
+    );
+
+    const abort = () => req.destroy(new Error("aborted"));
+    signal?.addEventListener("abort", abort, { once: true });
+    req.on("error", reject);
+    req.on("close", () => signal?.removeEventListener("abort", abort));
+    req.end();
+  });
 }
 
 function isRedirect(status) {

@@ -9,6 +9,7 @@ const state = {
   isVoting: false,
   lastVote: null,
   showShareFlow: false,
+  shareFlowCode: "",
   drag: null,
   routeScreen: "create"
 };
@@ -124,6 +125,7 @@ function wireControls() {
     const index = Number(remove.dataset.removeCard);
     if (isNaN(index) || index >= state.draftCards.length) return;
     state.draftCards.splice(index, 1);
+    refreshDraftDuplicateFlags();
     renderReviewCards();
     const remaining = state.draftCards.filter(isSubmittableDraftCard).length;
     setStatus(remaining ? `Removed. ${remaining} option${remaining !== 1 ? "s" : ""} remaining.` : "No options left. Paste links to add more.");
@@ -155,6 +157,7 @@ function wireControls() {
         state.voterKey = getOrCreateVoterKey(state.shortlist.code);
         state.voterName = loadVoterName(state.shortlist.code);
         state.showShareFlow = true;
+        state.shareFlowCode = state.shortlist.code;
         localStorage.setItem("swipe-shortlist-last-code", state.shortlist.code);
         saveLocalVotes();
         renderAll();
@@ -223,6 +226,7 @@ function wireControls() {
   $("[data-send-final]")?.addEventListener("click", async () => {
     const loaded = state.results?.winner ? state.results : await loadResults();
     if (loaded?.locked || !loaded?.winner) {
+      location.hash = routeHash("vote");
       renderLockedResults();
       return;
     }
@@ -798,10 +802,23 @@ function parseMessyText(text) {
   const seenUrls = new Set();
   const result = [];
 
-  const rawUrls = (text.match(/(?:https?:\/\/|www\.)[^\s<>"']+/g) || [])
-    .map((u) => u.replace(/[),.;]+$/g, ""));
+  const rawUrls = [];
+  lines.forEach((line, lineIndex) => {
+    const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"']+/g;
+    let match;
+    while ((match = urlPattern.exec(line)) !== null) {
+      rawUrls.push({
+        urlStr: match[0].replace(/[),.;]+$/g, ""),
+        rawLength: match[0].length,
+        lineIndex,
+        contextLine: line,
+        urlPos: match.index
+      });
+    }
+  });
 
-  for (const urlStr of rawUrls) {
+  for (const rawUrl of rawUrls) {
+    const { urlStr, rawLength, lineIndex, contextLine, urlPos } = rawUrl;
     try {
       const normalizedInput = urlStr.startsWith("www.") ? `https://${urlStr}` : urlStr;
       const url = new URL(normalizedInput);
@@ -811,25 +828,22 @@ function parseMessyText(text) {
       seenUrls.add(normalizedUrl);
       const domain = url.hostname.replace(/^www\./, "");
 
-      let lineIndex = -1;
-      let contextLine = "";
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes(urlStr)) {
-          contextLine = lines[i];
-          lineIndex = i;
-          break;
-        }
-      }
-
       const textBeforeLine = lineIndex > 0 ? lines[lineIndex - 1].trim() : "";
       const textAfterLine = lineIndex < lines.length - 1 ? lines[lineIndex + 1].trim() : "";
-      const urlPos = contextLine.indexOf(urlStr);
       const beforeOnLine = contextLine.substring(0, urlPos).replace(/[-,;:.]*\s*$/, "").trim();
-      const afterOnLine = contextLine.substring(urlPos + urlStr.length).trim();
+      const afterOnLine = contextLine.substring(urlPos + rawLength).trim();
 
-      const nearbyText = [textBeforeLine, contextLine, textAfterLine].filter(Boolean).join(" ");
+      // Strip URL from context before price matching to avoid
+      // treating URL path segments (IDs, numbers) as prices.
+      const textForPrices = `${contextLine.slice(0, urlPos)} ${contextLine.slice(urlPos + rawLength)}`;
+      const priceContext = [
+        lineHasUrl(textBeforeLine) ? "" : textBeforeLine,
+        textForPrices,
+        lineHasUrl(textAfterLine) ? "" : textAfterLine
+      ];
+      const nearbyText = priceContext.filter(Boolean).join(" ");
       const priceRegex = /(?:[$€£]\s*(?:\d+(?:[.,]\d+)?)(?:\s*\/\s*(?:night|person|week|total))?|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP)(?:\s*\/\s*(?:night|person|week|total))?)/gi;
-      const sameLinePrices = [...contextLine.matchAll(priceRegex)];
+      const sameLinePrices = [...textForPrices.matchAll(priceRegex)];
       const allPrices = [...nearbyText.matchAll(priceRegex)];
       const priceText = sameLinePrices.length > 0
         ? sameLinePrices[0][0].trim()
@@ -889,6 +903,22 @@ function parseMessyText(text) {
 
 function isSubmittableDraftCard(card) {
   return Boolean(card?.isValid && !card.isDuplicate);
+}
+
+function lineHasUrl(line) {
+  return /(?:https?:\/\/|www\.)[^\s<>"']+/i.test(line || "");
+}
+
+function refreshDraftDuplicateFlags() {
+  const seenUrls = new Set();
+  state.draftCards.forEach((card) => {
+    if (!card?.isValid) {
+      card.isDuplicate = false;
+      return;
+    }
+    card.isDuplicate = seenUrls.has(card.sourceUrl);
+    seenUrls.add(card.sourceUrl);
+  });
 }
 
 function draftCardsFromState() {
@@ -999,7 +1029,7 @@ function renderShareBanner() {
     return;
   }
 
-  if (state.showShareFlow) {
+  if (state.showShareFlow && state.shareFlowCode === state.shortlist.code) {
     banner.classList.remove("is-hidden");
     if (privateRow) privateRow.classList.add("is-hidden");
     $("[data-share-url]").textContent = shareUrl();
@@ -1020,11 +1050,17 @@ async function loadShortlist(code) {
     state.results = null;
     state.currentIndex = 0;
     state.votedCardIds.clear();
+    state.showShareFlow = false;
+    state.shareFlowCode = "";
     setStatus("That private voting link was not found.");
     renderAll();
     return false;
   }
 
+  if (state.shareFlowCode !== existing.code) {
+    state.showShareFlow = false;
+    state.shareFlowCode = "";
+  }
   state.shortlist = existing;
   state.results = null;
   state.voterKey = getOrCreateVoterKey(existing.code);

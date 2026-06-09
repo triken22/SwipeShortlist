@@ -89,6 +89,14 @@ test("isPrivateIPv6 identifies IPv4-mapped private", () => {
   assert.equal(isPrivateIPv6("::ffff:127.0.0.1"), true);
   assert.equal(isPrivateIPv6("::ffff:10.0.0.1"), true);
   assert.equal(isPrivateIPv6("::ffff:192.168.1.1"), true);
+  // Hex forms of IPv4-mapped private addresses (SSRF bypass vector)
+  assert.equal(isPrivateIPv6("::ffff:7f00:1"), true);   // hex form of 127.0.0.1
+  assert.equal(isPrivateIPv6("::ffff:a00:1"), true);    // hex form of 10.0.0.1
+  assert.equal(isPrivateIPv6("::ffff:c0a8:101"), true); // hex form of 192.168.1.1
+  assert.equal(isPrivateIPv6("::ffff:ac10:1"), true);   // hex form of 172.16.0.1
+  // Full 16-byte form with hex embedded IPv4
+  assert.equal(isPrivateIPv6("0:0:0:0:0:ffff:7f00:1"), true);
+  assert.equal(isPrivateIPv6("0:0:0:0:0:ffff:a00:1"), true);
 });
 
 test("isPrivateIPv6 rejects public IPv6", () => {

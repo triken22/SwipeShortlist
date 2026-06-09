@@ -88,13 +88,6 @@ export function migrate() {
     CREATE UNIQUE INDEX IF NOT EXISTS voters_shortlist_key_idx
     ON voters(shortlist_id, voter_key)
     WHERE voter_key IS NOT NULL;
-
-    DELETE FROM shortlists
-    WHERE id IN (
-      SELECT DISTINCT shortlist_id
-      FROM cards
-      WHERE trust_label LIKE 'Demo card%'
-    );
   `);
 }
 
@@ -300,10 +293,11 @@ function getWinnerRationale(rankedCards, shortlist) {
   const runnerUp = rankedCards[1];
 
   const totalVoters = shortlist.completedVoterCount || shortlist.voters.length || 1;
-  const vetoThreshold = Math.ceil(totalVoters / 2);
+  const winnerVoterCount = winner.votes?.length || totalVoters;
+  const vetoThreshold = Math.ceil(winnerVoterCount / 2);
   const hasVeto = winner.noCount >= vetoThreshold && winner.noCount > 0;
   const tied = runnerUp && winner.score === runnerUp.score;
-  const isContested = winner.noCount > (winner.yesCount + winner.strongYesCount);
+  const isContested = winner.noCount > winner.yesCount;
 
   let summary, detail;
   if (tied && runnerUp) {
@@ -311,12 +305,12 @@ function getWinnerRationale(rankedCards, shortlist) {
     detail = `Tied between "${winner.title}" and "${runnerUp.title}" — needs group discussion`;
   } else if (hasVeto) {
     summary = "vetoed";
-    detail = `"${winner.title}" received ${winner.noCount} No — ${winner.noCount >= totalVoters ? "everyone" : "half of"} the group objects`;
+    detail = `"${winner.title}" received ${winner.noCount} No — ${winner.noCount >= winnerVoterCount ? "everyone" : "half of"} the group objects`;
   } else if (isContested) {
     summary = "contested";
     detail = `"${winner.title}" has more No votes than positive votes — consider the backup options`;
   } else {
-    const posCount = winner.yesCount + winner.strongYesCount;
+    const posCount = winner.yesCount;
     summary = "clear";
     detail = posCount > 0
       ? `"${winner.title}" received ${posCount} positive vote${posCount !== 1 ? "s" : ""} and no strong objections`
@@ -327,7 +321,7 @@ function getWinnerRationale(rankedCards, shortlist) {
     summary,
     detail,
     noCount: winner.noCount,
-    yesCount: winner.yesCount + winner.strongYesCount,
+    yesCount: winner.yesCount,
     holdCount: winner.holdCount,
     hasBackup: !!runnerUp,
     backupTitle: runnerUp?.title || null,
@@ -410,8 +404,9 @@ function cardsFromDraftCards(draftCards) {
         if (!["http:", "https:"].includes(url.protocol)) return null;
         const domain = url.hostname.replace(/^www\./, "");
         const facts = Array.isArray(card.facts) ? card.facts.map((f) => String(f || "").trim()).filter(Boolean) : [];
+        const title = String(card.title || "").trim();
         return {
-          title: (card.title || titleFromUrl(url)).slice(0, 72),
+          title: (title || titleFromUrl(url)).slice(0, 72),
           sourceDomain: domain,
           sourceUrl: url.toString(),
           location: (card.location || domain).slice(0, 80),
@@ -519,26 +514,45 @@ function normalizeVoterInput(voter) {
 }
 
 function ensureVoter(shortlistId, voter) {
+  const voterKey = cleanVoterKey(voter.voterKey || "");
   const existing = findVoter(shortlistId, voter);
-  if (existing) return existing;
+  if (existing) {
+    if (voterKey && String(existing.voter_key || "").startsWith("legacy-")) {
+      db.prepare("UPDATE voters SET voter_key = ? WHERE id = ?").run(voterKey, existing.id);
+      return db.prepare("SELECT * FROM voters WHERE id = ?").get(existing.id);
+    }
+    return existing;
+  }
 
   const name = uniqueVoterName(shortlistId, cleanVoterName(voter.voterName));
-  const voterKey = cleanVoterKey(voter.voterKey || "") || fallbackVoterKey(name);
+  const nextVoterKey = voterKey || fallbackVoterKey(name);
   const result = db
     .prepare("INSERT INTO voters (shortlist_id, voter_key, name, initials, is_owner) VALUES (?, ?, ?, ?, 0)")
-    .run(shortlistId, voterKey, name, initialsFor(name));
+    .run(shortlistId, nextVoterKey, name, initialsFor(name));
   return db.prepare("SELECT * FROM voters WHERE id = ?").get(Number(result.lastInsertRowid));
 }
 
 function findVoter(shortlistId, voter) {
   const voterKey = cleanVoterKey(voter.voterKey || "");
+  const rawName = String(voter.voterName || "").trim();
   if (voterKey) {
     const byKey = db.prepare("SELECT * FROM voters WHERE shortlist_id = ? AND voter_key = ?").get(shortlistId, voterKey);
     if (byKey) return byKey;
+    if (rawName) {
+      const legacyByName = db
+        .prepare(
+          `SELECT *
+           FROM voters
+           WHERE shortlist_id = ?
+             AND lower(name) = lower(?)
+             AND voter_key LIKE 'legacy-%'`
+        )
+        .get(shortlistId, cleanVoterName(rawName));
+      if (legacyByName) return legacyByName;
+    }
     return null;
   }
 
-  const rawName = String(voter.voterName || "").trim();
   if (!rawName) return null;
 
   const fallbackKey = fallbackVoterKey(cleanVoterName(rawName));
