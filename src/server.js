@@ -159,7 +159,7 @@ async function readJson(req) {
 }
 
 function serveStatic(pathname, res, headOnly = false) {
-  const safePath = pathname === "/" ? "/index.html" : pathname;
+  const safePath = pathname === "/" ? "/index.html" : pathname === "/favicon.ico" ? "/assets/link-card.svg" : pathname;
   const normalized = normalize(decodeURIComponent(safePath)).replace(/^(\.\.[/\\])+/, "");
   const filePath = resolve(join(PUBLIC_DIR, normalized));
 
