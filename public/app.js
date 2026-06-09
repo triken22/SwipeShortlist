@@ -16,6 +16,22 @@ const state = {
 const DEFAULT_TITLE = "Private shortlist";
 const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
 const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"]);
+const GENERIC_URL_PATH_PARTS = new Set([
+  "accommodation",
+  "accommodations",
+  "detail",
+  "details",
+  "hotel",
+  "hotels",
+  "listing",
+  "listings",
+  "property",
+  "properties",
+  "room",
+  "rooms",
+  "stay",
+  "stays",
+]);
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -89,6 +105,10 @@ function wireControls() {
     const index = Number(target.dataset?.cardIndex);
     const field = target.dataset?.cardField;
     if (isNaN(index) || !field || index >= state.draftCards.length) return;
+    state.draftCards[index]._userEditedFields = {
+      ...(state.draftCards[index]._userEditedFields || {}),
+      [field]: true
+    };
     if (field === "facts") {
       state.draftCards[index].facts = target.value.split("\n").map((f) => f.trim()).filter(Boolean);
     } else {
@@ -416,7 +436,7 @@ async function renderResults() {
   if (state.results?.backups?.length) {
     const backup = state.results.backups[0];
     $("[data-backup-row]").innerHTML = `Backup: ${escapeHtml(backup.title)} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
-    $("[data-backup-row]").dataset.note = `Backup: ${backup.title} — ${backup.sourceUrl}`;
+    $("[data-backup-row]").dataset.note = `Backup: ${backup.title} - ${backup.sourceUrl}`;
   }
 }
 
@@ -698,24 +718,42 @@ async function enrichDraftCards() {
       const idx = state.draftCards.findIndex((c) => c.sourceUrl === meta.url && c.isValid);
       if (idx === -1) continue;
       const card = state.draftCards[idx];
-      // Only fill title if user hasn't edited it and metadata has a real title
-      if (meta.title && meta.title !== "Link from " + domainFromUrl(meta.url) && !card._userEdited) {
+      const editedFields = card._userEditedFields || {};
+      const sourceDomain = domainFromUrl(meta.url);
+      const metadataTitle = cleanCardText(meta.title, 72);
+      const metadataDescription = cleanCardText(meta.description, 120);
+      const metadataSiteName = cleanCardText(meta.siteName, 80);
+      if (metadataTitle && metadataTitle !== "Link from " + sourceDomain && !card._userEdited && !editedFields.title) {
         const oldTitle = card.title;
-        card.title = meta.title.slice(0, 72);
+        card.title = metadataTitle;
         if (card.title !== oldTitle) changed = true;
       }
-      // Add site name as a fact if available
-      if (meta.siteName && (!card.facts || card.facts.length === 0)) {
-        card.facts = [`Listed on ${meta.siteName}`];
+
+      if (metadataSiteName && !editedFields.location && (!card.location || card.location === sourceDomain)) {
+        card.location = metadataSiteName;
         changed = true;
+      }
+
+      if (!editedFields.facts && (!card.facts || card.facts.length === 0)) {
+        if (metadataDescription) {
+          card.facts = [metadataDescription];
+          changed = true;
+        } else if (metadataSiteName) {
+          card.facts = [`Listed on ${metadataSiteName}`];
+          changed = true;
+        }
       }
     }
     if (changed) {
       renderReviewCards();
     }
   } catch {
-    // Metadata fetch failed silently — cards still work with fallback data
+    // Metadata enrichment is optional. Fallback cards still create a valid deck.
   }
+}
+
+function cleanCardText(value, maxLength) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
 function scheduleMetadataEnrichment() {
@@ -735,15 +773,23 @@ function titleFromUrl(url) {
     .filter(Boolean)
     .map((part) => part.replace(/\.[a-z0-9]+$/i, ""))
     .filter(Boolean)
-    .filter((part) => !/^\d{4,}$/.test(part)); // reject purely numeric path segments
+    .filter(isUsefulPathPart);
   const raw = pathBits.at(-1) || "";
   const title = raw.replace(/[-_+]+/g, " ").replace(/\s+/g, " ").trim();
   if (title && title.length > 1) {
     return title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72);
   }
-  // Honest fallback: domain name + hint
   const domain = sourceDomain(url);
   return `Link from ${domain}`;
+}
+
+function isUsefulPathPart(part) {
+  const normalized = part.toLowerCase();
+  return (
+    !/^\d{4,}$/.test(normalized) &&
+    !/^[a-z]{2}(?:-[a-z]{2})?$/.test(normalized) &&
+    !GENERIC_URL_PATH_PARTS.has(normalized)
+  );
 }
 
 function parseMessyText(text) {
@@ -757,7 +803,8 @@ function parseMessyText(text) {
 
   for (const urlStr of rawUrls) {
     try {
-      const url = new URL(urlStr);
+      const normalizedInput = urlStr.startsWith("www.") ? `https://${urlStr}` : urlStr;
+      const url = new URL(normalizedInput);
       if (!["http:", "https:"].includes(url.protocol)) continue;
       const normalizedUrl = url.toString();
       const isDuplicate = seenUrls.has(normalizedUrl);
@@ -781,7 +828,6 @@ function parseMessyText(text) {
       const afterOnLine = contextLine.substring(urlPos + urlStr.length).trim();
 
       const nearbyText = [textBeforeLine, contextLine, textAfterLine].filter(Boolean).join(" ");
-      // Only match prices with explicit currency prefix or suffix — never bare numbers
       const priceRegex = /(?:[$€£]\s*(?:\d+(?:[.,]\d+)?)(?:\s*\/\s*(?:night|person|week|total))?|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP)(?:\s*\/\s*(?:night|person|week|total))?)/gi;
       const sameLinePrices = [...contextLine.matchAll(priceRegex)];
       const allPrices = [...nearbyText.matchAll(priceRegex)];
@@ -871,7 +917,7 @@ function renderReviewCards() {
   $("[data-found-panel]")?.classList.toggle("is-hidden", hasContent);
 
   $("[data-found-count]").textContent = hasContent
-    ? `${validCards.length} option${validCards.length !== 1 ? "s" : ""} ready — edit then create`
+    ? `${validCards.length} option${validCards.length !== 1 ? "s" : ""} ready. Edit then create.`
     : "Paste links to create cards";
   $("[data-found-note]").textContent = hasContent
     ? "Edit details so voters have enough context to decide without reopening the chat."
@@ -892,7 +938,9 @@ function renderReviewCards() {
           <span class="review-index">${index + 1}</span>
           ${card.isDuplicate ? '<span class="review-warning">Duplicate URL</span>' : ""}
           ${!card.isValid ? '<span class="review-warning is-error">Invalid link</span>' : ""}
-          <button class="review-remove" data-remove-card="${index}" aria-label="Remove this option">✕</button>
+          <button class="review-remove" data-remove-card="${index}" aria-label="Remove this option">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>
+          </button>
         </div>
         <label class="review-field">
           <span>Title</span>

@@ -94,6 +94,27 @@ test("imports pasted links as votable cards without fake price certainty", async
   }
 });
 
+test("bare travel container links fall back to source domain titles", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-bare-links-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=bare-links-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      links: ["https://www.airbnb.com/rooms/12345678", "https://www.booking.com/hotel/es/example.html"]
+    });
+
+    assert.equal(shortlist.cards[0].title, "Link from airbnb.com");
+    assert.equal(shortlist.cards[0].priceLabel, "Price to verify");
+    assert.equal(shortlist.cards[1].title, "Example");
+    assert.equal(shortlist.cards[1].priceLabel, "Price to verify");
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("omitted voter key cannot act as an existing keyed voter", async () => {
   const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-keyed-"));
   process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");

@@ -16,6 +16,22 @@ const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
 const DEFAULT_TITLE = "Private shortlist";
 const DEFAULT_DEADLINE_LABEL = "Aim to decide today";
 const MAX_LINKS = 50;
+const GENERIC_URL_PATH_PARTS = new Set([
+  "accommodation",
+  "accommodations",
+  "detail",
+  "details",
+  "hotel",
+  "hotels",
+  "listing",
+  "listings",
+  "property",
+  "properties",
+  "room",
+  "rooms",
+  "stay",
+  "stays",
+]);
 
 export function migrate() {
   db.exec(`
@@ -419,7 +435,7 @@ function titleFromUrl(url) {
     .filter(Boolean)
     .map((part) => part.replace(/\.[a-z0-9]+$/i, ""))
     .filter(Boolean)
-    .filter((part) => !/^\d{4,}$/.test(part)); // reject purely numeric path segments
+    .filter(isUsefulPathPart);
   const raw = pathBits.at(-1) || "";
   const title = raw
     .replace(/[-_+]+/g, " ")
@@ -431,6 +447,15 @@ function titleFromUrl(url) {
   // Honest fallback: domain name + hint
   const domain = url.hostname.replace(/^www\./, "");
   return `Link from ${domain}`;
+}
+
+function isUsefulPathPart(part) {
+  const normalized = part.toLowerCase();
+  return (
+    !/^\d{4,}$/.test(normalized) &&
+    !/^[a-z]{2}(?:-[a-z]{2})?$/.test(normalized) &&
+    !GENERIC_URL_PATH_PARTS.has(normalized)
+  );
 }
 
 function initialsFor(name) {
