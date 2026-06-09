@@ -418,13 +418,19 @@ function titleFromUrl(url) {
     .split("/")
     .filter(Boolean)
     .map((part) => part.replace(/\.[a-z0-9]+$/i, ""))
-    .filter(Boolean);
-  const raw = pathBits.at(-1) || url.hostname.replace(/^www\./, "");
+    .filter(Boolean)
+    .filter((part) => !/^\d{4,}$/.test(part)); // reject purely numeric path segments
+  const raw = pathBits.at(-1) || "";
   const title = raw
     .replace(/[-_+]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return title ? title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72) : "Imported link";
+  if (title && title.length > 1) {
+    return title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72);
+  }
+  // Honest fallback: domain name + hint
+  const domain = url.hostname.replace(/^www\./, "");
+  return `Link from ${domain}`;
 }
 
 function initialsFor(name) {

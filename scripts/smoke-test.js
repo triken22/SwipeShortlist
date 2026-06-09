@@ -73,6 +73,23 @@ await request(`/api/shortlists/${encodeURIComponent(created.code)}/votes`, {
 const afterUndo = await request(`/api/shortlists/${encodeURIComponent(created.code)}/results?voterKey=${encodeURIComponent(voterKey)}&voterName=You`);
 assert(afterUndo.locked === true, "undoing a completed deck locks results again");
 
+// Bare numeric links must not produce numeric-only titles or fake prices
+const bareLinksCreated = await request("/api/shortlists", {
+  method: "POST",
+  body: JSON.stringify({
+    links: [
+      "https://www.airbnb.com/rooms/12345678",
+      "https://www.booking.com/hotel/es/example.html"
+    ]
+  })
+});
+assert(bareLinksCreated.code, "bare links shortlist has a code");
+assert(bareLinksCreated.cards.length === 2, "bare links become two cards");
+assert(!bareLinksCreated.cards[0].title.match(/^\d+$/), "bare numeric path segment is not used as title card 0");
+assert(!bareLinksCreated.cards[1].title.match(/^\d+$/), "bare numeric path segment is not used as title card 1");
+assert(bareLinksCreated.cards.every((card) => card.priceLabel === "Price to verify"), "bare links do not fake price certainty");
+assert(bareLinksCreated.cards.every((card) => card.trustLabel.includes("verify")), "bare links produce honest trust labels");
+
 const voterKey2 = `smoke-${Date.now()}-2`;
 
 const structuredCreated = await request("/api/shortlists", {
@@ -110,7 +127,7 @@ assert(withRationale.rationale?.copyText, "results include copy-ready text");
 assert(withRationale.rationale?.copyText.includes("Bali Beach Resort"), "copy text includes the winner title");
 assert(withRationale.rationale?.hasBackup === true, "rationale indicates backup availability");
 
-console.log(`smoke ok: ${created.code} winner=${results.winner.title} | structured=${structuredCreated.code} rationale=${withRationale.rationale.summary}`);
+console.log(`smoke ok: ${created.code} winner=${results.winner.title} | bare=${bareLinksCreated.code} | structured=${structuredCreated.code} rationale=${withRationale.rationale.summary}`);
 
 async function request(path, options = {}) {
   const response = await requestRaw(path, options);

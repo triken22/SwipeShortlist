@@ -58,6 +58,7 @@ function wireControls() {
       renderReviewCards();
       const count = state.draftCards.filter(isSubmittableDraftCard).length;
       setStatus(count ? `${count} option${count !== 1 ? "s" : ""} extracted. Review and create the voting link.` : "Paste at least one full http or https link.");
+      scheduleMetadataEnrichment();
     } catch {
       input.classList.remove("is-hidden");
       input.focus();
@@ -74,6 +75,7 @@ function wireControls() {
     } else {
       setStatus("Paste at least one full http or https link.");
     }
+    scheduleMetadataEnrichment();
   });
 
   $("[data-focus-links]")?.addEventListener("click", () => {
@@ -91,6 +93,7 @@ function wireControls() {
       state.draftCards[index].facts = target.value.split("\n").map((f) => f.trim()).filter(Boolean);
     } else {
       state.draftCards[index][field] = target.value;
+      if (field === "title") state.draftCards[index]._userEdited = true;
     }
     updateCreateActions(state.draftCards.filter(isSubmittableDraftCard).length > 0);
   });
@@ -675,6 +678,53 @@ function previewCardsFromLinks(links) {
   });
 }
 
+let metadataDebounceTimer = null;
+
+async function enrichDraftCards() {
+  const validCards = state.draftCards.filter(isSubmittableDraftCard);
+  const urls = validCards.map((c) => c.sourceUrl);
+  if (!urls.length) return;
+
+  try {
+    const response = await api("/api/metadata", {
+      method: "POST",
+      body: JSON.stringify({ urls }),
+    });
+    if (!response?.metadata?.length) return;
+
+    let changed = false;
+    for (const meta of response.metadata) {
+      if (!meta.fetched) continue;
+      const idx = state.draftCards.findIndex((c) => c.sourceUrl === meta.url && c.isValid);
+      if (idx === -1) continue;
+      const card = state.draftCards[idx];
+      // Only fill title if user hasn't edited it and metadata has a real title
+      if (meta.title && meta.title !== "Link from " + domainFromUrl(meta.url) && !card._userEdited) {
+        const oldTitle = card.title;
+        card.title = meta.title.slice(0, 72);
+        if (card.title !== oldTitle) changed = true;
+      }
+      // Add site name as a fact if available
+      if (meta.siteName && (!card.facts || card.facts.length === 0)) {
+        card.facts = [`Listed on ${meta.siteName}`];
+        changed = true;
+      }
+    }
+    if (changed) {
+      renderReviewCards();
+    }
+  } catch {
+    // Metadata fetch failed silently — cards still work with fallback data
+  }
+}
+
+function scheduleMetadataEnrichment() {
+  clearTimeout(metadataDebounceTimer);
+  metadataDebounceTimer = setTimeout(() => {
+    enrichDraftCards().catch(() => {});
+  }, 400);
+}
+
 function sourceDomain(url) {
   return url.hostname.replace(/^www\./, "");
 }
@@ -684,10 +734,16 @@ function titleFromUrl(url) {
     .split("/")
     .filter(Boolean)
     .map((part) => part.replace(/\.[a-z0-9]+$/i, ""))
-    .filter(Boolean);
-  const raw = pathBits.at(-1) || sourceDomain(url);
+    .filter(Boolean)
+    .filter((part) => !/^\d{4,}$/.test(part)); // reject purely numeric path segments
+  const raw = pathBits.at(-1) || "";
   const title = raw.replace(/[-_+]+/g, " ").replace(/\s+/g, " ").trim();
-  return title ? title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72) : "Imported link";
+  if (title && title.length > 1) {
+    return title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72);
+  }
+  // Honest fallback: domain name + hint
+  const domain = sourceDomain(url);
+  return `Link from ${domain}`;
 }
 
 function parseMessyText(text) {
@@ -725,7 +781,8 @@ function parseMessyText(text) {
       const afterOnLine = contextLine.substring(urlPos + urlStr.length).trim();
 
       const nearbyText = [textBeforeLine, contextLine, textAfterLine].filter(Boolean).join(" ");
-      const priceRegex = /\$?\d+(?:[.,]\d+)?(?:\s*(?:USD|EUR|GBP))?(?:\s*\/\s*(?:night|person|week|total))?/gi;
+      // Only match prices with explicit currency prefix or suffix — never bare numbers
+      const priceRegex = /(?:[$€£]\s*(?:\d+(?:[.,]\d+)?)(?:\s*\/\s*(?:night|person|week|total))?|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP)(?:\s*\/\s*(?:night|person|week|total))?)/gi;
       const sameLinePrices = [...contextLine.matchAll(priceRegex)];
       const allPrices = [...nearbyText.matchAll(priceRegex)];
       const priceText = sameLinePrices.length > 0

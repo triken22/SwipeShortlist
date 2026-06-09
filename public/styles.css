@@ -1257,23 +1257,84 @@ button.code-pill:hover {
   }
 }
 
-@media (max-width: 370px) {
+/* ── Mobile-first: compact layout for phones (390x844, 430x900) ── */
+
+@media (max-width: 430px) {
   .content {
-    padding-right: 18px;
-    padding-left: 18px;
+    padding: 22px 20px 24px;
   }
 
-  .hero-copy h2,
-  .result-hero h2 {
-    font-size: 2.05rem;
+  .content-vote {
+    padding: 14px 18px 16px;
+  }
+
+  .content-create {
+    padding-bottom: 22px;
   }
 
   .card-stack {
-    min-height: 500px;
+    min-height: 420px;
+    padding-bottom: 16px;
   }
 
   .vote-card {
-    min-height: 486px;
+    min-height: 390px;
+  }
+
+  .card-media {
+    height: 170px;
+  }
+
+  .winner-media {
+    height: 160px;
+  }
+
+  .card-body {
+    gap: 8px;
+    padding: 14px;
+  }
+
+  .card-body h2 {
+    font-size: 1.4rem;
+  }
+
+  .share-banner {
+    gap: 6px;
+    margin-bottom: 14px;
+    padding: 12px;
+  }
+
+  .share-banner strong {
+    font-size: 0.92rem;
+  }
+
+  .share-banner code {
+    padding: 8px 10px;
+    font-size: 0.7rem;
+  }
+
+  .share-actions {
+    gap: 6px;
+  }
+
+  .share-copy {
+    min-height: 36px;
+    padding: 8px 14px;
+    font-size: 0.84rem;
+  }
+
+  .private-row {
+    gap: 4px 10px;
+    margin-bottom: 14px;
+    padding: 12px;
+  }
+
+  .private-row strong {
+    font-size: 0.88rem;
+  }
+
+  .vote-header h1 {
+    font-size: 1.1rem;
   }
 
   .action-grid {
@@ -1281,6 +1342,83 @@ button.code-pill:hover {
   }
 
   .vote-button {
-    min-height: 84px;
+    min-height: 72px;
+    padding: 8px 6px;
+  }
+
+  .vote-button strong {
+    font-size: 0.9rem;
+  }
+
+  .bottom-bar {
+    padding: 10px 16px 14px;
+  }
+
+  .hero-copy h2,
+  .result-hero h2 {
+    font-size: clamp(1.8rem, 9vw, 2.4rem);
+  }
+
+  .hero-copy p,
+  .result-hero span {
+    font-size: 0.94rem;
+  }
+
+  .paste-box {
+    margin: 18px 0 14px;
+    padding: 22px 14px;
+  }
+
+  .result-hero {
+    gap: 6px;
+  }
+
+  .winner-body {
+    padding: 12px;
+  }
+
+  .winner-body h3 {
+    font-size: 1.2rem;
+  }
+
+  .vote-feedback p {
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 370px) {
+  .content {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .hero-copy h2,
+  .result-hero h2 {
+    font-size: 1.8rem;
+  }
+
+  .card-stack {
+    min-height: 380px;
+  }
+
+  .vote-card {
+    min-height: 360px;
+  }
+
+  .card-media {
+    height: 140px;
+  }
+
+  .action-grid {
+    gap: 6px;
+  }
+
+  .vote-button {
+    min-height: 66px;
+    padding: 6px 4px;
+  }
+
+  .bottom-bar {
+    padding: 8px 12px 12px;
   }
 }

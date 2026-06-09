@@ -2,6 +2,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { createServer } from "node:http";
 import { createShortlist, deleteVote, getResults, getShortlist, hasVoterCompleted, migrate, recordVote } from "./db.js";
+import { fetchMetadata } from "./metadata.js";
 
 const ROOT = resolve(process.cwd());
 const PUBLIC_DIR = resolve(ROOT, "public");
@@ -84,6 +85,17 @@ const server = createServer(async (req, res) => {
       }
       const results = getResults(code);
       return results ? json(res, 200, results) : json(res, 404, { error: "Shortlist not found" });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/metadata") {
+      const body = await readJson(req);
+      if (body.error) return json(res, 400, { error: body.error });
+      const rawUrls = Array.isArray(body.urls) ? body.urls.slice(0, 20) : [];
+      const results = await Promise.allSettled(rawUrls.map((u) => fetchMetadata(String(u))));
+      const metadata = results
+        .filter((r) => r.status === "fulfilled" && r.value !== null)
+        .map((r) => r.value);
+      return json(res, 200, { metadata });
     }
 
     if (req.method === "GET" || req.method === "HEAD") {
@@ -193,3 +205,5 @@ function contentType(filePath) {
       return "application/octet-stream";
   }
 }
+
+// Metadata enrichment imported from ./metadata.js (SSRF-safe fetch + HTML parsing)
