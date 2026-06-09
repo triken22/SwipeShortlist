@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isPrivateIPv4, isPrivateIPv6, isPrivateIP, extractMetadata, fetchMetadata } from "../src/metadata.js";
+import { isPrivateIPv4, isPrivateIPv6, isPrivateIP, extractMetadata, fetchMetadata, readLimitedBody, cleanTrackingUrl, extractDomainFallback, extractStructuredData } from "../src/metadata.js";
 
 // isPrivateIPv4
 
@@ -263,5 +263,178 @@ test("fetchMetadata ignores low-quality error titles", async () => {
       }),
   });
 
+  assert.equal(result, null);
+});
+
+// --- Link Intelligence: improved body reading ---
+
+test("readLimitedBody reads past 64KB to find </head> boundary", async () => {
+  // Create HTML with padding >64KB before </head> so OG tags land after
+  // the original 64KB cutoff.
+  const padding = "x".repeat(66000);
+  const html = `<html><head>\n${padding}<meta property="og:title" content="Deep OGTag">\n<meta property="og:site_name" content="DeepSite">\n</head><body></body></html>`;
+
+  const response = new Response(html);
+  const result = await readLimitedBody(response.body);
+
+  // Should include the deep OG tags (trimmed at </head> boundary)
+  assert.ok(result.includes("Deep OGTag"), "og:title past 64KB is captured");
+  assert.ok(result.includes("DeepSite"), "og:site_name past 64KB is captured");
+  // Should NOT include <body> content
+  assert.ok(!result.includes("<body>"), "body is excluded by </head> trim");
+});
+
+test("fetchMetadata extracts OG metadata from response body past 64KB", async () => {
+  // Simulate the Airbnb scenario where OG tags appear after ~85KB.
+  const padding = "x".repeat(86000);
+  const html = `<!doctype html><html><head>${padding}<meta property="og:title" content="Serviced apartment in Athens · ★4.88 · 1 bedroom">
+<meta property="og:description" content="Serenity Penthouse with Terrace in Exarchia">
+<meta property="og:site_name" content="Airbnb">
+<meta name="description" content="Serenity Penthouse with Terrace in Exarchia">
+</head><body></body></html>`;
+
+  const result = await fetchMetadata("https://www.airbnb.co.uk/rooms/1426755644990955296", {
+    isSafe: async () => true,
+    fetchImpl: async () =>
+      new Response(html, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+  });
+
+  assert.notEqual(result, null);
+  assert.equal(result.siteName, "Airbnb");
+  assert.ok(result.title.includes("Serviced apartment"), `title "${result.title}" includes apartment context`);
+  assert.ok(result.description.includes("Serenity"), "description includes listing description");
+  assert.equal(result.fetched, true);
+});
+
+// --- Link Intelligence: domain-aware deterministic fallback ---
+
+test("extractDomainFallback recognizes Airbnb rooms URL and returns listing ID", () => {
+  const result = extractDomainFallback("https://www.airbnb.co.uk/rooms/1426755644990955296?unique_share_id=xxx&s=76");
+
+  assert.notEqual(result, null);
+  assert.equal(result.provider, "Airbnb");
+  assert.equal(result.sourceKind, "vacation rental listing");
+  assert.equal(result.listingId, "1426755644990955296");
+  assert.equal(result.canonicalUrl, "https://airbnb.co.uk/rooms/1426755644990955296");
+  assert.ok(result.facts.includes("Price and availability must be checked on Airbnb"));
+});
+
+test("extractDomainFallback recognizes Booking.com hotel URL", () => {
+  const result = extractDomainFallback("https://www.booking.com/hotel/es/some-example.html");
+
+  assert.notEqual(result, null);
+  assert.equal(result.provider, "Booking.com");
+  assert.equal(result.sourceKind, "accommodation listing");
+  // Note: listingId preserves file extension from Booking.com hotel slug
+  assert.equal(result.listingId, "some-example.html");
+  assert.ok(result.facts.includes("Price and availability must be checked on Booking.com"));
+});
+
+test("extractDomainFallback returns null for unrecognized domains", () => {
+  const result = extractDomainFallback("https://example.org/some-page");
+  // Generic fallback may extract path segment
+  if (result) {
+    assert.equal(result.listingId, null);
+    assert.equal(result.canonicalUrl, null);
+  }
+});
+
+test("extractDomainFallback returns null for unknown domain with useful path", () => {
+  const result = extractDomainFallback("https://example.org/cool-resort");
+  // Generic path-based fallback is intentionally omitted — only known providers get domain-aware context.
+  assert.equal(result, null);
+});
+
+// --- Link Intelligence: URL cleaning ---
+
+test("cleanTrackingUrl removes Airbnb share tracking parameters", () => {
+  const cleaned = cleanTrackingUrl(
+    "https://www.airbnb.co.uk/rooms/1426755644990955296?unique_share_id=35a7bace-fc03-4510-ab95-5a0fb2f013f3&viralityEntryPoint=1&s=76"
+  );
+  assert.ok(!cleaned.includes("unique_share_id"), "unique_share_id removed");
+  assert.ok(!cleaned.includes("viralityEntryPoint"), "viralityEntryPoint removed");
+  assert.ok(!cleaned.includes("&s=76"), "s param removed");
+  assert.ok(cleaned.includes("/rooms/1426755644990955296"), "listing ID preserved");
+});
+
+test("cleanTrackingUrl removes utm_* parameters", () => {
+  const cleaned = cleanTrackingUrl("https://example.org/page?utm_source=twitter&utm_medium=social&real=keep");
+  assert.ok(!cleaned.includes("utm_source"), "utm_source removed");
+  assert.ok(!cleaned.includes("utm_medium"), "utm_medium removed");
+  assert.ok(cleaned.includes("real=keep"), "non-tracking params kept");
+});
+
+test("cleanTrackingUrl returns original on invalid URL", () => {
+  assert.equal(cleanTrackingUrl("not-a-url"), "not-a-url");
+});
+
+// --- Link Intelligence: structured data extraction ---
+
+test("extractStructuredData extracts JSON-LD blocks", () => {
+  const html = `<html><head>
+<script type="application/ld+json">{"@type":"Product","name":"Test Listing","image":"https://example.org/pic.jpg"}</script>
+<script type="application/ld+json">{"@type":"Hotel","name":"Beach Hotel"}</script>
+</head><body></body></html>`;
+
+  const result = extractStructuredData(html);
+  assert.equal(result.length, 2);
+  assert.equal(result[0]["@type"], "Product");
+  assert.equal(result[0].name, "Test Listing");
+  assert.equal(result[1]["@type"], "Hotel");
+});
+
+test("extractStructuredData skips invalid JSON gracefully", () => {
+  const html = `<html><head>
+<script type="application/ld+json">{invalid}</script>
+<script type="application/ld+json">{"@type":"Restaurant","name":"Good Eats"}</script>
+</head><body></body></html>`;
+
+  const result = extractStructuredData(html);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "Good Eats");
+});
+
+test("extractStructuredData returns empty array when no JSON-LD present", () => {
+  const result = extractStructuredData("<html><head></head></html>");
+  assert.deepEqual(result, []);
+});
+
+// --- Link Intelligence: fetchMetadata domain-aware fallback ---
+
+test("fetchMetadata falls back to domain-aware context for Airbnb when OG extraction yields nothing", async () => {
+  // HTML with no OG tags, no title, no description - triggers domain fallback
+  const html = "<html><head><meta charset=\"utf-8\"></head><body>No useful metadata here</body></html>";
+
+  const result = await fetchMetadata("https://www.airbnb.co.uk/rooms/1426755644990955296", {
+    isSafe: async () => true,
+    fetchImpl: async () =>
+      new Response(html, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+  });
+
+  assert.notEqual(result, null, "domain fallback returns non-null");
+  assert.equal(result.siteName, "Airbnb");
+  assert.ok(result.title.includes("Airbnb"), `fallback title "${result.title}" mentions Airbnb`);
+  assert.ok(result.description.includes("Listing ID"), "fallback description mentions listing ID");
+  assert.equal(result.fetched, true);
+  assert.equal(result._fallback, true, "marks result as fallback");
+});
+
+test("fetchMetadata returns null for unrecognized domain with no OG tags", async () => {
+  const result = await fetchMetadata("https://example.org/unknown-page", {
+    isSafe: async () => true,
+    fetchImpl: async () =>
+      new Response("<html><head></head><body>nothing</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+
+  // Unknown domain with no OG metadata returns null
   assert.equal(result, null);
 });

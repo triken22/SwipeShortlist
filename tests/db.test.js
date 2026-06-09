@@ -105,7 +105,11 @@ test("bare travel container links fall back to source domain titles", async () =
       links: ["https://www.airbnb.com/rooms/12345678", "https://www.booking.com/hotel/es/example.html"]
     });
 
-    assert.equal(shortlist.cards[0].title, "Link from airbnb.com");
+    assert.equal(shortlist.cards[0].title, "Airbnb stay");
+    assert.equal(shortlist.cards[0].sourceUrl, "https://www.airbnb.com/rooms/12345678");
+    assert.equal(shortlist.cards[0].location, "Airbnb");
+    assert.ok(shortlist.cards[0].facts.includes("Listing ID 12345678"));
+    assert.ok(shortlist.cards[0].facts.includes("Price and availability must be checked on Airbnb"));
     assert.equal(shortlist.cards[0].priceLabel, "Price to verify");
     assert.equal(shortlist.cards[1].title, "Example");
     assert.equal(shortlist.cards[1].priceLabel, "Price to verify");

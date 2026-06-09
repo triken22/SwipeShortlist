@@ -87,6 +87,8 @@ assert(bareLinksCreated.code, "bare links shortlist has a code");
 assert(bareLinksCreated.cards.length === 2, "bare links become two cards");
 assert(!bareLinksCreated.cards[0].title.match(/^\d+$/), "bare numeric path segment is not used as title card 0");
 assert(!bareLinksCreated.cards[1].title.match(/^\d+$/), "bare numeric path segment is not used as title card 1");
+assert(bareLinksCreated.cards[0].title === "Airbnb stay", "Airbnb links get useful provider context");
+assert(bareLinksCreated.cards[0].facts.some((fact) => fact.includes("Listing ID 12345678")), "Airbnb links keep listing id context");
 assert(bareLinksCreated.cards.every((card) => card.priceLabel === "Price to verify"), "bare links do not fake price certainty");
 assert(bareLinksCreated.cards.every((card) => card.trustLabel.includes("verify")), "bare links produce honest trust labels");
 

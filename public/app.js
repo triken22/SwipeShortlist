@@ -1,3 +1,5 @@
+import { linkContextForUrl } from "./link-context.js";
+
 const state = {
   shortlist: null,
   results: null,
@@ -683,11 +685,13 @@ function previewCardsFromLinks(links) {
   return links.map((link) => {
     try {
       const url = new URL(link);
+      const linkContext = linkContextForUrl(url.toString());
       return {
-        title: titleFromUrl(url),
+        title: linkContext?.title || titleFromUrl(url),
         sourceDomain: sourceDomain(url),
-        location: sourceDomain(url),
+        location: linkContext?.location || sourceDomain(url),
         priceLabel: "Price to verify",
+        facts: linkContext?.facts || [],
         imagePath: DEFAULT_CARD_IMAGE
       };
     } catch {
@@ -727,23 +731,32 @@ async function enrichDraftCards() {
       const metadataTitle = cleanCardText(meta.title, 72);
       const metadataDescription = cleanCardText(meta.description, 120);
       const metadataSiteName = cleanCardText(meta.siteName, 80);
+      const metadataLocation = cleanCardText(locationFromMetadataTitle(metadataTitle), 80);
       if (metadataTitle && metadataTitle !== "Link from " + sourceDomain && !card._userEdited && !editedFields.title) {
         const oldTitle = card.title;
         card.title = metadataTitle;
         if (card.title !== oldTitle) changed = true;
       }
 
-      if (metadataSiteName && !editedFields.location && (!card.location || card.location === sourceDomain)) {
-        card.location = metadataSiteName;
-        changed = true;
+      if (!editedFields.location) {
+        if (
+          metadataLocation &&
+          (!card.location || card.location === sourceDomain || card.location === metadataSiteName || card.location === "Airbnb")
+        ) {
+          card.location = metadataLocation;
+          changed = true;
+        } else if (metadataSiteName && (!card.location || card.location === sourceDomain)) {
+          card.location = metadataSiteName;
+          changed = true;
+        }
       }
 
-      if (!editedFields.facts && (!card.facts || card.facts.length === 0)) {
+      if (!editedFields.facts) {
         if (metadataDescription) {
-          card.facts = [metadataDescription];
+          card.facts = [metadataDescription, ...(card.facts || []).filter((fact) => fact !== metadataDescription)].slice(0, 4);
           changed = true;
         } else if (metadataSiteName) {
-          card.facts = [`Listed on ${metadataSiteName}`];
+          card.facts = [`Listed on ${metadataSiteName}`, ...(card.facts || [])].slice(0, 4);
           changed = true;
         }
       }
@@ -758,6 +771,11 @@ async function enrichDraftCards() {
 
 function cleanCardText(value, maxLength) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function locationFromMetadataTitle(title) {
+  const match = String(title || "").match(/\bin\s+([^·|–—-]{2,80})(?:\s*[·|–—-]|$)/i);
+  return match ? match[1].trim() : "";
 }
 
 function scheduleMetadataEnrichment() {
@@ -823,7 +841,8 @@ function parseMessyText(text) {
       const normalizedInput = urlStr.startsWith("www.") ? `https://${urlStr}` : urlStr;
       const url = new URL(normalizedInput);
       if (!["http:", "https:"].includes(url.protocol)) continue;
-      const normalizedUrl = url.toString();
+      const linkContext = linkContextForUrl(url.toString());
+      const normalizedUrl = linkContext?.canonicalUrl || url.toString();
       const isDuplicate = seenUrls.has(normalizedUrl);
       seenUrls.add(normalizedUrl);
       const domain = url.hostname.replace(/^www\./, "");
@@ -858,14 +877,15 @@ function parseMessyText(text) {
       if (!title && textBeforeLine && !textBeforeLine.match(/https?:\/\//) && textBeforeLine.length < 80) {
         title = textBeforeLine;
       }
-      title = title || titleFromUrl(url);
+      title = title || linkContext?.title || titleFromUrl(url);
 
-      let location = domain;
+      let location = linkContext?.location || domain;
       const locMatch = nearbyText.match(/\b(?:in|at|near|around)\s+([A-Z][a-zA-Z\s-]{2,30}?)(?:\s*[,.\n]|$)/);
       if (locMatch) location = locMatch[1].trim();
 
       const facts = [];
       if (priceText) facts.push(`${priceText} from pasted text`);
+      for (const fact of linkContext?.facts || []) facts.push(fact);
       if (afterOnLine && !afterOnLine.match(/^https?:\/\//)) {
         const fragments = afterOnLine.replace(/^[-\s,;]*/, "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
         for (const f of fragments.slice(0, 3)) {

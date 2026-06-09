@@ -4,7 +4,7 @@ import https from "node:https";
 import { isIP } from "node:net";
 
 const FETCH_TIMEOUT_MS = 4000;
-const MAX_METADATA_BYTES = 64 * 1024;
+const MAX_HEAD_BYTES = 256 * 1024;
 const MAX_REDIRECTS = 3;
 
 // Treat private, local, multicast, and reserved ranges as unsafe fetch targets.
@@ -141,6 +141,10 @@ function cleanText(value, maxLength) {
   return decodeHtmlEntities(value).replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
+function cleanCardText(value, maxLength) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
 function decodeHtmlEntities(value) {
   const named = {
     amp: "&",
@@ -214,20 +218,47 @@ export async function fetchMetadata(urlStr, options = {}) {
     const meta = extractMetadata(html);
 
     let title = meta.ogTitle || meta.title || null;
-    const description = meta.ogDescription || meta.description || null;
-    const siteName = meta.siteName || null;
+    let description = meta.ogDescription || meta.description || null;
+    let siteName = meta.siteName || null;
+    let ogImage = meta.ogImage || null;
     if (isLowQualityTitle(title)) title = null;
 
+    // If OG extraction gave nothing useful, try JSON-LD structured data.
     if (!title && !description && !siteName) {
+      const structured = extractStructuredData(html);
+      const structTitle = structuredTitle(structured);
+      const structImg = structuredImage(structured);
+      if (structTitle) title = structTitle;
+      if (structImg) ogImage = structImg;
+    }
+
+    // If still no useful metadata, apply deterministic domain-aware fallback.
+    if (!title && !description && !siteName) {
+      const fallback = extractDomainFallback(currentUrl);
+      if (fallback) {
+        const fallbackTitle = `${fallback.provider} ${fallback.sourceKind}`;
+        const fallbackDesc = fallback.listingId
+          ? `Listing ID: ${fallback.listingId}`
+          : fallback.facts.join(" · ");
+        return {
+          url: urlStr,
+          title: cleanCardText(fallbackTitle, 72),
+          description: cleanCardText(fallbackDesc, 200) || null,
+          siteName: fallback.provider,
+          canonicalUrl: fallback.canonicalUrl || null,
+          fetched: true,
+          _fallback: true,
+        };
+      }
       return null;
     }
 
     return {
       url: urlStr,
-      title,
-      description,
-      siteName,
-      ogImage: meta.ogImage || null,
+      title: cleanCardText(title, 72) || null,
+      description: cleanCardText(description, 200) || null,
+      siteName: cleanCardText(siteName, 80) || null,
+      ogImage,
       fetched: true,
     };
   }
@@ -307,16 +338,203 @@ function isLowQualityTitle(title) {
   );
 }
 
-async function readLimitedBody(body) {
+const KNOWN_DOMAIN_PROVIDERS = [
+  { pattern: /(^|\.)airbnb\.[a-z.]{2,}$/i, provider: "Airbnb", kind: "vacation rental listing" },
+  { pattern: /(^|\.)booking\.[a-z.]{2,}$/i, provider: "Booking.com", kind: "accommodation listing" },
+  { pattern: /(^|\.)vrbo\.[a-z.]{2,}$/i, provider: "Vrbo", kind: "vacation rental listing" },
+  { pattern: /(^|\.)expedia\.[a-z.]{2,}$/i, provider: "Expedia", kind: "travel listing" },
+  { pattern: /(^|\.)hotels\.[a-z.]{2,}$/i, provider: "Hotels.com", kind: "accommodation listing" },
+  { pattern: /(^|\.)trivago\.[a-z.]{2,}$/i, provider: "Trivago", kind: "accommodation comparison" },
+  { pattern: /(^|\.)kayak\.[a-z.]{2,}$/i, provider: "Kayak", kind: "travel search" },
+  { pattern: /(^|\.)opentable\.[a-z.]{2,}$/i, provider: "OpenTable", kind: "restaurant reservation" },
+  { pattern: /(^|\.)yelp\.[a-z.]{2,}$/i, provider: "Yelp", kind: "local business listing" },
+  { pattern: /(^|\.)amazon\.[a-z.]{2,}$/i, provider: "Amazon", kind: "product listing" },
+  { pattern: /(^|\.)ebay\.[a-z.]{2,}$/i, provider: "eBay", kind: "product listing" },
+  { pattern: /(^|\.)etsy\.[a-z.]{2,}$/i, provider: "Etsy", kind: "product listing" },
+];
+
+// Known tracking / analytics query parameters stripped from share URLs.
+const TRACKING_QUERY_PARAMS = new Set([
+  "unique_share_id",
+  "viralityEntryPoint",
+  "s",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "fbclid",
+  "gclid",
+  "ref",
+  "source",
+  "mc_cid",
+  "mc_eid",
+  "yclid",
+  "igshid",
+]);
+
+/**
+ * Remove common tracking / share-tracking parameters from a URL.
+ * Returns the cleaned URL string (or the original if parsing fails).
+ */
+export function cleanTrackingUrl(urlStr) {
+  try {
+    const url = new URL(urlStr);
+    for (const param of TRACKING_QUERY_PARAMS) {
+      url.searchParams.delete(param);
+    }
+    // If after deletion the search is empty, drop the "?" entirely.
+    const cleaned = url.toString();
+    // Restore trailing slash if original had one and cleaning removed it.
+    return cleaned;
+  } catch {
+    return urlStr;
+  }
+}
+
+/**
+ * Extract structured data (JSON-LD) from HTML <script type="application/ld+json">.
+ * Returns a flat array of parsed JSON objects (invalid blocks are silently skipped).
+ */
+export function extractStructuredData(html) {
+  const results = [];
+  const scriptPattern = /<script\b[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = scriptPattern.exec(html)) !== null) {
+    try {
+      const data = JSON.parse(match[1].trim());
+      results.push(data);
+    } catch {
+      // Skip invalid JSON-LD blocks.
+    }
+  }
+  return results;
+}
+
+/**
+ * Extract a useful title from structured JSON-LD data relevant to travel/hosting.
+ * Looks for @type "Product", "Hotel", "Accommodation", "LodgingBusiness", etc.
+ * Returns the first matching name, or null.
+ */
+function structuredTitle(structured) {
+  for (const entry of structured) {
+    const graph = entry["@graph"] || [entry];
+    for (const item of graph) {
+      const type = item["@type"];
+      if (typeof type === "string") {
+        const lower = type.toLowerCase();
+        if (
+          lower.includes("product") ||
+          lower.includes("hotel") ||
+          lower.includes("lodging") ||
+          lower.includes("accommodation") ||
+          lower.includes("restaurant")
+        ) {
+          if (item.name) return cleanText(item.name, 200);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract a useful image from structured JSON-LD data.
+ */
+function structuredImage(structured) {
+  for (const entry of structured) {
+    const graph = entry["@graph"] || [entry];
+    for (const item of graph) {
+      if (item.image) {
+        if (typeof item.image === "string") return item.image;
+        if (item.image.url) return item.image.url;
+        if (Array.isArray(item.image) && item.image.length > 0) {
+          const first = item.image[0];
+          if (typeof first === "string") return first;
+          if (first.url) return first.url;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Deterministic domain-aware fallback: if OG extraction and JSON-LD both
+ * yield nothing useful, produce honest structural context from the URL itself.
+ * Never fakes price, availability, rating, or exact title.
+ */
+export function extractDomainFallback(urlStr) {
+  let url;
+  try {
+    url = new URL(urlStr);
+  } catch {
+    return null;
+  }
+
+  const hostname = url.hostname.replace(/^www\./, "");
+
+  for (const provider of KNOWN_DOMAIN_PROVIDERS) {
+    if (provider.pattern.test(hostname)) {
+      const result = {
+        provider: provider.provider,
+        sourceKind: provider.kind,
+        listingId: null,
+        canonicalUrl: null,
+        facts: [],
+      };
+
+      // Airbnb: extract listing ID from /rooms/<id>
+      if (provider.provider === "Airbnb") {
+        const roomsMatch = url.pathname.match(/^\/rooms\/(\d+)/);
+        if (roomsMatch) {
+          result.listingId = roomsMatch[1];
+          result.canonicalUrl = `https://${hostname}/rooms/${roomsMatch[1]}`;
+          result.facts.push("Price and availability must be checked on Airbnb");
+        }
+      }
+
+      // Booking.com: extract hotel reference
+      if (provider.provider === "Booking.com") {
+        const hotelMatch = url.pathname.match(/\/hotel\/([a-z]+)\/([^/]+)/);
+        if (hotelMatch) {
+          result.listingId = hotelMatch[2];
+          result.facts.push("Price and availability must be checked on Booking.com");
+        }
+      }
+
+      return result;
+    }
+  }
+
+  // No domain match — return null. The per-path fallback in titleFromUrl
+  // handles generic path-based extraction; only provide domain-specific
+  // context for recognized providers to avoid false positives.
+  return null;
+}
+
+export async function readLimitedBody(body) {
   const chunks = [];
   let total = 0;
   for await (const chunk of body) {
     const buffer = Buffer.from(chunk);
-    const remaining = MAX_METADATA_BYTES - total;
+    const remaining = MAX_HEAD_BYTES - total;
     if (remaining <= 0) break;
-    chunks.push(buffer.subarray(0, remaining));
-    total += Math.min(buffer.byteLength, remaining);
-    if (total >= MAX_METADATA_BYTES) break;
+    const piece = buffer.subarray(0, remaining);
+    chunks.push(piece);
+    total += piece.byteLength;
+    const html = Buffer.concat(chunks).toString("utf8");
+    const headEnd = html.toLowerCase().lastIndexOf("</head>");
+    if (headEnd !== -1) return html.slice(0, headEnd + 7);
+    if (total >= MAX_HEAD_BYTES) break;
   }
-  return Buffer.concat(chunks).toString("utf8");
+
+  const html = Buffer.concat(chunks).toString("utf8");
+
+  // Trim to </head> boundary if found — most useful metadata lives in <head>.
+  const headEnd = html.toLowerCase().lastIndexOf("</head>");
+  if (headEnd !== -1) {
+    return html.slice(0, headEnd + 7);
+  }
+  return html;
 }

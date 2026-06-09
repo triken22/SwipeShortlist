@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { randomInt } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { linkContextForUrl } from "../public/link-context.js";
 
 const DATA_DIR = resolve(process.env.SWIPE_DATA_DIR || "./data");
 const DB_PATH = resolve(process.env.SWIPE_DB_PATH || `${DATA_DIR}/swipe-shortlist.sqlite`);
@@ -32,6 +33,20 @@ const GENERIC_URL_PATH_PARTS = new Set([
   "stay",
   "stays",
 ]);
+
+// Known travel/product domain patterns for better fallback titles.
+const KNOWN_DOMAIN_FALLBACKS = [
+  { pattern: /(^|\.)airbnb\.[a-z.]{2,}$/, title: "Airbnb stay" },
+  { pattern: /(^|\.)booking\.[a-z.]{2,}$/, title: "Booking.com accommodation" },
+  { pattern: /(^|\.)vrbo\.[a-z.]{2,}$/, title: "Vrbo rental" },
+  { pattern: /(^|\.)expedia\.[a-z.]{2,}$/, title: "Expedia listing" },
+  { pattern: /(^|\.)hotels\.[a-z.]{2,}$/, title: "Hotels.com accommodation" },
+  { pattern: /(^|\.)opentable\.[a-z.]{2,}$/, title: "OpenTable restaurant" },
+  { pattern: /(^|\.)yelp\.[a-z.]{2,}$/, title: "Yelp listing" },
+  { pattern: /(^|\.)amazon\.[a-z.]{2,}$/, title: "Amazon product" },
+  { pattern: /(^|\.)ebay\.[a-z.]{2,}$/, title: "eBay listing" },
+  { pattern: /(^|\.)etsy\.[a-z.]{2,}$/, title: "Etsy product" },
+];
 
 export function migrate() {
   db.exec(`
@@ -378,14 +393,16 @@ function cardsFromLinks(links) {
         const url = new URL(link);
         if (!["http:", "https:"].includes(url.protocol)) return null;
         const domain = url.hostname.replace(/^www\./, "");
+        const linkContext = linkContextForUrl(url.toString());
+        const facts = linkContext?.facts || ["Imported link", "One-tap vote", "Needs check"];
         return {
-          title: titleFromUrl(url),
+          title: linkContext?.title || titleFromUrl(url),
           sourceDomain: domain,
-          sourceUrl: url.toString(),
-          location: domain,
+          sourceUrl: linkContext?.canonicalUrl || url.toString(),
+          location: linkContext?.location || domain,
           priceLabel: "Price to verify",
-          facts: ["Imported link", "One-tap vote", "Needs check"],
-          trustLabel: "Imported from pasted link · verify details before deciding",
+          facts,
+          trustLabel: linkContext?.trustLabel || "Imported from pasted link · verify details before deciding",
           imagePath: DEFAULT_CARD_IMAGE
         };
       } catch {
@@ -403,18 +420,20 @@ function cardsFromDraftCards(draftCards) {
         const url = new URL(card.sourceUrl);
         if (!["http:", "https:"].includes(url.protocol)) return null;
         const domain = url.hostname.replace(/^www\./, "");
+        const linkContext = linkContextForUrl(url.toString());
         const facts = Array.isArray(card.facts) ? card.facts.map((f) => String(f || "").trim()).filter(Boolean) : [];
+        const fallbackFacts = linkContext?.facts || ["Imported link", "Needs check"];
         const title = String(card.title || "").trim();
         return {
-          title: (title || titleFromUrl(url)).slice(0, 72),
+          title: (title || linkContext?.title || titleFromUrl(url)).slice(0, 72),
           sourceDomain: domain,
-          sourceUrl: url.toString(),
-          location: (card.location || domain).slice(0, 80),
+          sourceUrl: linkContext?.canonicalUrl || url.toString(),
+          location: (card.location || linkContext?.location || domain).slice(0, 80),
           priceLabel: (card.priceLabel || "Price to verify").slice(0, 40),
-          facts: facts.length > 0 ? facts.slice(0, 6) : ["Imported link", "Needs check"],
+          facts: facts.length > 0 ? facts.slice(0, 6) : fallbackFacts,
           trustLabel: facts.length > 0
             ? "Context from your pasted text · verify details before deciding"
-            : "Imported from pasted link · verify details before deciding",
+            : linkContext?.trustLabel || "Imported from pasted link · verify details before deciding",
           imagePath: DEFAULT_CARD_IMAGE
         };
       } catch {
@@ -439,8 +458,14 @@ function titleFromUrl(url) {
   if (title && title.length > 1) {
     return title.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 72);
   }
-  // Honest fallback: domain name + hint
+  // Honest fallback: domain-aware title for known travel/product sites,
+  // otherwise "Link from <domain>".
   const domain = url.hostname.replace(/^www\./, "");
+  for (const fb of KNOWN_DOMAIN_FALLBACKS) {
+    if (fb.pattern.test(domain)) {
+      return fb.title;
+    }
+  }
   return `Link from ${domain}`;
 }
 

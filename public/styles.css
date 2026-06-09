@@ -1321,11 +1321,11 @@ button.code-pill:hover {
   }
 
   .vote-card {
-    min-height: 390px;
+    min-height: 0;
   }
 
   .card-media {
-    height: 170px;
+    height: 132px;
   }
 
   .winner-media {
@@ -1333,12 +1333,38 @@ button.code-pill:hover {
   }
 
   .card-body {
-    gap: 8px;
-    padding: 14px;
+    gap: 7px;
+    padding: 12px;
   }
 
   .card-body h2 {
-    font-size: 1.4rem;
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 1.18rem;
+    line-height: 1.08;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .fact-row {
+    max-height: 62px;
+    overflow: hidden;
+  }
+
+  .fact {
+    min-height: 26px;
+    padding: 5px 7px;
+    font-size: 0.76rem;
+  }
+
+  .trust {
+    font-size: 0.76rem;
+  }
+
+  .source-link {
+    min-height: 36px;
+    padding: 7px 10px;
+    font-size: 0.82rem;
   }
 
   .share-banner {
