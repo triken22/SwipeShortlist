@@ -32,17 +32,17 @@
 
           <div class="content content-create">
             <section class="hero-copy">
-              <h2 id="create-title">Turn chat links into one decision</h2>
-              <p>Paste the mess. Send one voting link. Stop chasing replies.</p>
+              <h2 id="create-title">Decide anything<br />with your group</h2>
+              <p>Add places, links, or ideas — send one vote. Settled in minutes.</p>
             </section>
 
             <section class="paste-box" aria-label="Add options">
               <div class="mode-toggle" role="tablist" aria-label="Input mode">
-                <button class="mode-btn is-active" type="button" data-mode="links" role="tab" aria-selected="true">Paste links</button>
-                <button class="mode-btn" type="button" data-mode="manual" role="tab" aria-selected="false">Add manually</button>
+                <button class="mode-btn" type="button" data-mode="links" role="tab" aria-selected="false">Paste links</button>
+                <button class="mode-btn is-active" type="button" data-mode="manual" role="tab" aria-selected="true">Add manually</button>
               </div>
 
-              <div class="mode-panel" data-mode-panel="links">
+              <div class="mode-panel is-hidden" data-mode-panel="links">
                 <button class="paste-action" type="button" data-paste-clipboard>
                   <span>
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -66,9 +66,9 @@
                 </button>
               </div>
 
-              <div class="mode-panel is-hidden" data-mode-panel="manual">
+              <div class="mode-panel" data-mode-panel="manual">
                 <div class="manual-card-form">
-                  <input type="text" class="manual-input" data-manual-title placeholder="Title (required)" maxlength="72" />
+                  <input type="text" class="manual-input" data-manual-title placeholder="Option name (required)" maxlength="72" />
                   <input type="text" class="manual-input" data-manual-desc placeholder="Description (optional)" maxlength="200" />
                   <input type="text" class="manual-input" data-manual-image placeholder="Image URL (optional)" />
                   <input type="text" class="manual-input" data-manual-link placeholder="Source link (optional)" />
@@ -110,7 +110,7 @@
                 <rect x="6" y="10" width="12" height="9" rx="2" />
                 <path d="M8 10V8a4 4 0 0 1 8 0v2" />
               </svg>
-              Private link. No app. No accounts.
+              Add options, then create a voting link to share.
             </p>
           </footer>
         </article>
@@ -126,9 +126,9 @@
             <section class="share-banner is-hidden" data-share-banner aria-label="Share voting link">
               <strong>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-                Voting link created
+                Ready to share
               </strong>
-              <p>Share this link in your group chat:</p>
+              <p>Copy this link and send it in your group chat:</p>
               <div class="share-link-row">
                 <code data-share-url></code>
                 <button class="share-copy" type="button" data-share-copy>
@@ -166,7 +166,7 @@
             <section class="private-row" data-private-row>
               <label class="identity-field">
                 <span>Vote as</span>
-                <input type="text" data-voter-name autocomplete="name" maxlength="40" value="Guest" disabled />
+                <input type="text" data-voter-name autocomplete="name" maxlength="40" value="You" disabled />
               </label>
               <span data-vote-context>Swipe or tap to vote</span>
               <span data-countdown class="countdown is-hidden"></span>
@@ -230,8 +230,8 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" /></svg>
             </button>
             <div>
-              <h1 data-title>Private shortlist</h1>
-              <p data-result-topbar>Private result</p>
+              <h1>Result</h1>
+              <p data-result-topbar>Final pick</p>
             </div>
             <button class="code-pill" type="button" data-code data-copy-link disabled>New</button>
           </header>

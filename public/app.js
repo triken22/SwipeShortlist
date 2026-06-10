@@ -598,32 +598,24 @@ function renderCurrentCard() {
   const hasSource = card.sourceUrl && !card.sourceUrl.startsWith("manual-");
   const isManual = !hasSource;
   const domainLabel = isManual ? "" : escapeHtml(card.sourceDomain);
-  const locationLabel = isManual && card.location === "Manual option" ? "" : escapeHtml(card.location);
-  const priceLabel = isManual ? "" : card.priceLabel;
+  const locationLabel = (card.location && card.location !== "Manual option") ? escapeHtml(card.location) : "";
+  const hasFacts = card.facts && Array.isArray(card.facts) && card.facts.length > 0 && card.facts.some(f => f);
   const trustLabel = isManual ? "" : card.trustLabel;
+  const hasPrice = !isManual && card.priceLabel;
+  const hasLocation = locationLabel !== "";
+  const hasDescription = !!card.description && card.description.trim() !== "";
 
   target.innerHTML = `
     ${cardMediaMarkup(card, "card-media")}
     <div class="card-body">
       ${domainLabel ? `<span class="domain">${domainLabel}</span>` : ""}
       <h2>${escapeHtml(card.title)}</h2>
-      ${card.description ? `<p class="card-desc">${escapeHtml(card.description)}</p>` : ""}
-      ${priceLabel ? `<strong class="price">${escapeHtml(priceLabel)}</strong>` : ""}
-      ${locationLabel ? `<span class="location">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
-        ${locationLabel}
-      </span>` : ""}
-      ${card.facts?.length ? `<div class="fact-row">
-        ${card.facts.map((fact) => `<span class="fact">${escapeHtml(fact)}</span>`).join("")}
-      </div>` : ""}
-      ${trustLabel ? `<span class="trust">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-        <span>${escapeHtml(trustLabel)}</span>
-      </span>` : ""}
-      ${hasSource ? `<a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">
-        Open source link
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
-      </a>` : ""}
+      ${hasDescription ? `<p class="card-desc">${escapeHtml(card.description)}</p>` : ""}
+      ${hasPrice ? `<strong class="price">${escapeHtml(hasPrice)}</strong>` : ""}
+      ${hasLocation ? `<span class="location"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg> ${locationLabel}</span>` : ""}
+      ${hasFacts ? `<div class="fact-row">${card.facts.filter(f => f).map((fact) => `<span class="fact">${escapeHtml(fact)}</span>`).join("")}</div>` : ""}
+      ${trustLabel ? `<span class="trust"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg><span>${escapeHtml(trustLabel)}</span></span>` : ""}
+      ${hasSource ? `<a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">Open source link<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg></a>` : ""}
     </div>
   `;
 }
@@ -663,17 +655,17 @@ async function renderResults() {
   $("[data-send-final]").innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
   $("[data-send-status]").textContent = "Ready to copy for the group chat.";
   const winnerIsManual = !winner.sourceUrl || winner.sourceUrl.startsWith("manual-");
+  const winnerHasDescription = !!winner.description && winner.description.trim() !== "";
+  const winnerHasLocation = winner.location && winner.location !== "Manual option";
+  const winnerHasPrice = !winnerIsManual && winner.priceLabel;
   $("[data-winner-card]").innerHTML = `
     ${cardMediaMarkup(winner, "winner-media")}
     <div class="winner-body">
       ${!winnerIsManual ? `<span class="domain">${escapeHtml(winner.sourceDomain)}</span>` : ""}
       <h3>${escapeHtml(winner.title)}</h3>
-      ${winner.description ? `<p class="card-desc">${escapeHtml(winner.description)}</p>` : ""}
-      ${!winnerIsManual && winner.priceLabel ? `<strong class="price">${escapeHtml(winner.priceLabel)}</strong>` : ""}
-      ${(winner.location && winner.location !== "Manual option") ? `<span class="location">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
-        ${escapeHtml(winner.location)}
-      </span>` : ""}
+      ${winnerHasDescription ? `<p class="card-desc">${escapeHtml(winner.description)}</p>` : ""}
+      ${winnerHasPrice ? `<strong class="price">${escapeHtml(winnerHasPrice)}</strong>` : ""}
+      ${winnerHasLocation ? `<span class="location"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg> ${escapeHtml(winner.location)}</span>` : ""}
       ${voteMarkup}
       <div class="score-row ${rationaleClass}">
         <span class="score is-yes"><strong>${winner.yesCount}</strong><span>yes</span></span>
@@ -681,13 +673,8 @@ async function renderResults() {
         <span class="score is-no"><strong>${winner.noCount}</strong><span>no</span></span>
         ${winner.abstainCount ? `<span class="score is-abstain"><strong>${Number(winner.abstainCount)}</strong><span>skip</span></span>` : ""}
       </div>
-      <div class="rationale-box">
-        <p>${escapeHtml(rationale?.detail || "")}</p>
-      </div>
-      ${!winnerIsManual ? `<a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
-        Open final link
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
-      </a>` : ""}
+      <div class="rationale-box"><p>${escapeHtml(rationale?.detail || "")}</p></div>
+      ${!winnerIsManual ? `<a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">Open final link<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg></a>` : ""}
     </div>
   `;
   $("[data-backup-row]")?.classList.toggle("is-hidden", !state.results?.backups?.length);
@@ -779,6 +766,13 @@ async function castVote(vote) {
   if (!card || !state.shortlist || state.isVoting) return;
   state.isVoting = true;
   setVoteControlsDisabled(true);
+
+  // Auto-dismiss share banner on first vote
+  if (state.showShareFlow) {
+    state.showShareFlow = false;
+    renderShareBanner();
+  }
+
   try {
     state.results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/votes`, {
       method: "POST",
@@ -930,16 +924,17 @@ async function loadPublicResults(code) {
     if (winner) {
       const hasSource = winner.sourceUrl && !winner.sourceUrl.startsWith("manual-");
       const isManual = !hasSource;
+      const pubHasDesc = !!winner.description && winner.description.trim() !== "";
+      const pubHasLoc = winner.location && winner.location !== "Manual option";
+      const pubHasPrice = !isManual && winner.priceLabel;
       $("[data-public-winner]").innerHTML = `
+        ${cardMediaMarkup(winner, "winner-media")}
         <div class="winner-body">
           ${!isManual ? `<span class="domain">${escapeHtml(winner.sourceDomain)}</span>` : ""}
           <h3>${escapeHtml(winner.title)}</h3>
-          ${winner.description ? `<p class="card-desc">${escapeHtml(winner.description)}</p>` : ""}
-          ${!isManual && winner.priceLabel ? `<strong class="price">${escapeHtml(winner.priceLabel)}</strong>` : ""}
-          ${(winner.location && winner.location !== "Manual option") ? `<span class="location">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
-            ${escapeHtml(winner.location)}
-          </span>` : ""}
+          ${pubHasDesc ? `<p class="card-desc">${escapeHtml(winner.description)}</p>` : ""}
+          ${pubHasPrice ? `<strong class="price">${escapeHtml(pubHasPrice)}</strong>` : ""}
+          ${pubHasLoc ? `<span class="location"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg> ${escapeHtml(winner.location)}</span>` : ""}
           <div class="score-row">
             <span class="score is-yes"><strong>${winner.yesCount}</strong><span>yes</span></span>
             <span class="score is-hold"><strong>${winner.holdCount}</strong><span>hold</span></span>
@@ -1486,36 +1481,44 @@ function domainFromUrl(urlStr) {
 
 function renderLockedResults() {
   const isFinalized = state.shortlist?.finalized;
+  const totalCards = state.shortlist?.cards?.length || 0;
+  const votedCount = state.votedCardIds.size;
+  const remaining = totalCards - votedCount;
+  const deadline = state.shortlist?.deadline;
+  let deadlineHint = "";
+  if (deadline) {
+    const diffMs = new Date(deadline) - new Date();
+    if (diffMs <= 0) deadlineHint = " Deadline passed.";
+    else deadlineHint = ` Closes in ${Math.ceil(diffMs / 60000)}m.`;
+  }
 
   if (isFinalized) {
-    // Finalized but voter hasn't completed yet — show waiting message
-    $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Decision closed`;
+    $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h8l2 4-2 10H6L4 10l2-4Z" /><path d="M12 4v2" /></svg> Decision closed`;
     $("[data-result-topbar]").textContent = "Decision closed";
-    $("[data-result-heading]").textContent = "The group decided while you were away";
-    $("[data-result-subheading]").textContent = "Vote on the remaining cards to see the result.";
+    $("[data-result-heading]").textContent = remaining > 0 ? `${remaining} more card${remaining > 1 ? "s" : ""} to go` : "Results ready";
+    $("[data-result-subheading]").textContent = remaining > 0 ? `Vote on ${remaining} more card${remaining > 1 ? "s" : ""} to see the group's pick.${deadlineHint}` : "The group decided.";
     $("[data-winner-card]").innerHTML = `
       <div class="winner-body">
-        <span class="domain">closed result</span>
-        <h3>Finish your deck</h3>
-        <span class="trust">The deadline has passed and the group decision is locked. Vote on remaining cards to reveal it.</span>
+        <h3>${remaining > 0 ? `${votedCount}/${totalCards} voted` : "Vote complete"}</h3>
+        <span class="trust">${remaining > 0 ? `Finish your ${remaining} remaining card${remaining > 1 ? "s" : ""} to unlock the result.` : "Results will appear here."}</span>
       </div>
     `;
   } else {
-    $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Private result`;
+    $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h8l2 4-2 10H6L4 10l2-4Z" /><path d="M12 4v2" /></svg> Private result`;
     $("[data-result-topbar]").textContent = "Private result";
-    $("[data-result-heading]").textContent = "Finish the deck to see the winner";
-    $("[data-result-subheading]").textContent = "Peer votes stay hidden until you have made a choice on every card.";
+    $("[data-result-heading]").textContent = remaining > 0 ? `${remaining} more card${remaining > 1 ? "s" : ""} to go` : "Complete!";
+    $("[data-result-subheading]").textContent = remaining > 0 ? `Vote on ${remaining} more card${remaining > 1 ? "s" : ""} to reveal the group pick.${deadlineHint}` : "Results open after your deck is complete.";
     $("[data-winner-card]").innerHTML = `
       <div class="winner-body">
-        <span class="domain">private result</span>
-        <h3>Your vote is still hidden</h3>
-        <span class="trust">Choose No, Hold, or Yes on every card before group results are revealed.</span>
+        <h3>${votedCount}/${totalCards} voted</h3>
+        <span class="trust">${remaining > 0 ? `${remaining} card${remaining > 1 ? "s" : ""} remaining — keep going.` : "All cards done! Just need to sync with server."}</span>
       </div>
     `;
   }
   $("[data-send-final]").innerHTML = `Back to vote <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
+  $("[data-send-final]").dataset.screenTarget = "vote";
   $("[data-backup-row]")?.classList.add("is-hidden");
-  $("[data-send-status]").textContent = "Results open after your deck is complete";
+  $("[data-send-status]").textContent = remaining > 0 ? `${remaining} card${remaining > 1 ? "s" : ""} remaining` : "Results loading...";
 }
 
 function renderShareBanner() {
@@ -1848,6 +1851,19 @@ function saveLocalVotes() {
 
 function cardMediaMarkup(card, className) {
   const imagePath = displayImagePath(card?.imagePath);
+  const isDefault = !card?.imagePath || imagePath === DEFAULT_CARD_IMAGE;
+  const isManual = isDefault && (!card?.sourceUrl || card.sourceUrl.startsWith("manual-"));
+
+  if (isManual) {
+    // Show a gradient with the first letter instead of generic SVG
+    const initial = (card?.title?.charAt(0) || "?").toUpperCase();
+    return `
+      <div class="${className} is-manual" role="img" aria-label="${escapeHtml(card?.title || "option")}">
+        <span class="card-initial">${escapeHtml(initial)}</span>
+      </div>
+    `;
+  }
+
   return `
     <div class="${className}">
       <img src="${escapeAttr(imagePath)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"

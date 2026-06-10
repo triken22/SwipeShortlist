@@ -809,6 +809,38 @@ button.code-pill:hover {
 
 /* ── Card Body ── */
 
+.card-media.is-manual {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--coral), var(--amber));
+  color: white;
+  font-size: 3.5rem;
+  font-weight: 700;
+  user-select: none;
+}
+
+.card-media.is-manual .card-initial {
+  font-family: var(--font-heading);
+  line-height: 1;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
+.winner-media.is-manual {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--coral), var(--amber));
+  color: white;
+  font-size: 3rem;
+  font-weight: 700;
+  user-select: none;
+}
+
+.winner-media.is-manual .card-initial {
+  font-family: var(--font-heading);
+  line-height: 1;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
 .card-body {
   display: grid;
   gap: 8px;
