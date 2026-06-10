@@ -239,26 +239,13 @@ function wireControls() {
         return;
       }
 
-      // Collect participant names from inputs
-      const participantInputs = $$("[data-participant-input]");
-      const participants = participantInputs
-        .map((input) => input.value.trim())
-        .filter(Boolean);
-
-      // Collect deadline
-      const deadlineInput = $("[data-deadline-input]");
-      const deadline = deadlineInput?.value || null;
-
       button.disabled = true;
       setStatus("Creating private voting link...");
       try {
-        const body = { cards };
-        if (participants.length > 0) body.participants = participants;
-        if (deadline) body.deadline = deadline;
-
+        // Create without participants or deadline — just the cards
         state.shortlist = await api("/api/shortlists", {
           method: "POST",
-          body: JSON.stringify(body)
+          body: JSON.stringify({ cards })
         });
         state.draftCards = [];
         state.results = null;
@@ -270,15 +257,14 @@ function wireControls() {
         state.shareFlowCode = state.shortlist.code;
         state.isCreator = true;
 
-        // Store magic links for the nudge system
-        if (state.shortlist.magicLinks) {
-          state.shareMagicLinks = state.shortlist.magicLinks;
-        }
+        // Collect post-create participants and deadline from the share banner
+        state.participants = [];
+        state.deadline = "";
 
         localStorage.setItem("swipe-shortlist-last-code", state.shortlist.code);
         saveLocalVotes();
         renderAll();
-        setStatus(`Created with ${cards.length} option${cards.length !== 1 ? "s" : ""}. Private link ready.`);
+        setStatus(`Created with ${cards.length} option${cards.length !== 1 ? "s" : ""}. Share the link in your chat.`);
         location.hash = routeHash("vote");
       } catch (error) {
         console.error(error);
@@ -314,6 +300,133 @@ function wireControls() {
     state.showShareFlow = false;
     renderAll();
     setStatus("Your voting link is ready. Share it from the code pill at the top.");
+  });
+
+  // Post-create: toggle participant setup in share flow
+  $("[data-toggle-participants]")?.addEventListener("click", () => {
+    const setup = $("[data-participant-setup]");
+    const isHidden = setup.classList.contains("is-hidden");
+    setup.classList.toggle("is-hidden");
+    $("[data-toggle-participants]").textContent = isHidden ? "- Hide participant setup" : "+ Add participants for named voting links";
+
+    // Init participant inputs if opening
+    if (isHidden) {
+      const container = $("[data-participant-container]");
+      if (container && !container.children.length) {
+        state.participants = ["", "", ""];
+        container.innerHTML = state.participants
+          .map((n, i) => `<input type="text" data-participant-input class="participant-input" value="${escapeAttr(n)}" placeholder="Participant ${i + 1}" maxlength="40" autocomplete="off" />`)
+          .join("");
+      }
+    }
+  });
+
+  // Post-create: add participant input
+  $("[data-add-participant]")?.addEventListener("click", () => {
+    const container = $("[data-participant-container]");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "participant-input";
+    input.dataset.participantInput = "";
+    input.placeholder = `Participant ${container.children.length + 1}`;
+    input.maxLength = 40;
+    input.autocomplete = "off";
+    container.appendChild(input);
+    input.focus();
+  });
+
+  // Post-create: save participants and generate magic links
+  $("[data-save-participants]")?.addEventListener("click", async () => {
+    if (!state.shortlist) return;
+    const inputs = $$("[data-participant-input]");
+    const names = inputs.map((i) => i.value.trim()).filter(Boolean);
+    if (!names.length) {
+      setStatus("Add at least one participant name.");
+      return;
+    }
+
+    setStatus("Generating voting links for participants...");
+    try {
+      // Re-create the shortlist with participants (idempotent — new code each time)
+      const cards = state.shortlist.cards.map((c) => ({
+        sourceUrl: c.sourceUrl,
+        title: c.title,
+        priceLabel: c.priceLabel,
+        location: c.location,
+        facts: c.facts
+      }));
+
+      const result = await api("/api/shortlists", {
+        method: "POST",
+        body: JSON.stringify({ participants: names, cards })
+      });
+
+      if (result?.magicLinks) {
+        state.shortlist = { ...state.shortlist, ...result };
+        state.shareMagicLinks = result.magicLinks;
+        state.participants = names;
+        renderShareBanner();
+        setStatus(`${names.length} participant links generated. Copy each person's link.`);
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus("Could not generate participant links. The universal link still works.");
+    }
+  });
+
+  // Post-create: toggle deadline setup
+  $("[data-toggle-deadline]")?.addEventListener("click", () => {
+    const setup = $("[data-deadline-setup]");
+    const isHidden = setup.classList.contains("is-hidden");
+    setup.classList.toggle("is-hidden");
+    $("[data-toggle-deadline]").textContent = isHidden ? "- Hide deadline" : "+ Set a decision deadline";
+
+    if (isHidden) {
+      const input = $("[data-deadline-setup] [data-deadline-input]");
+      if (input && !input.value) {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        d.setHours(21, 0, 0, 0);
+        input.value = d.toISOString().slice(0, 16);
+      }
+    }
+  });
+
+  // Post-create: save deadline
+  $("[data-save-deadline]")?.addEventListener("click", async () => {
+    if (!state.shortlist) return;
+    const input = $("[data-deadline-setup] [data-deadline-input]");
+    const deadline = input?.value;
+    if (!deadline) {
+      setStatus("Pick a date and time for the deadline.");
+      return;
+    }
+
+    setStatus("Setting deadline...");
+    try {
+      const cards = state.shortlist.cards.map((c) => ({
+        sourceUrl: c.sourceUrl,
+        title: c.title,
+        priceLabel: c.priceLabel,
+        location: c.location,
+        facts: c.facts
+      }));
+
+      const participants = state.shortlist.voters?.map((v) => v.name) || [];
+      const result = await api("/api/shortlists", {
+        method: "POST",
+        body: JSON.stringify({ participants, deadline, cards })
+      });
+
+      if (result) {
+        state.shortlist = { ...state.shortlist, deadline: result.deadline, ...result };
+        renderAll();
+        setStatus(`Deadline set: ${new Date(deadline).toLocaleString()}`);
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus("Could not set deadline. Try again.");
+    }
   });
 
   $("[data-voter-name]")?.addEventListener("input", (event) => {
@@ -378,7 +491,6 @@ function renderAll() {
   renderParticipationDashboard();
   renderCurrentCard();
   renderCountdown();
-  createRenderer();
 }
 
 function renderPreview() {
@@ -414,15 +526,12 @@ function renderPreview() {
 }
 
 function renderVoters() {
-  const chips = $("[data-voter-chips]");
   const avatars = $("[data-avatar-dots]");
   const voters = state.shortlist?.voters || [];
-  chips.innerHTML = voters.length
-    ? voters.map((voter) => `<span class="chip">${escapeHtml(voter.name)}</span>`).join("")
-    : `<span class="chip">One private link</span><span class="chip">No accounts</span>`;
+  if (!avatars) return;
   avatars.innerHTML = voters.length
     ? voters.map((voter) => `<span class="avatar">${escapeHtml(voter.initials)}</span>`).join("")
-    : `<span class="avatar">Y</span>`;
+    : state.shortlist ? `<span class="avatar">V</span>` : `<span class="avatar">Y</span>`;
 }
 
 function renderVoteContext() {
@@ -439,24 +548,22 @@ function renderVoteContext() {
   const deadline = state.shortlist?.deadline;
   const isFinalized = state.shortlist?.finalized;
 
-  // Countdown and progress info
-  let deadlineInfo = "";
+  let info = "";
   if (isFinalized) {
-    deadlineInfo = " · Decision closed";
+    info = " · Closed";
   } else if (deadline) {
     const diffMs = new Date(deadline) - new Date();
-    if (diffMs <= 0) deadlineInfo = " · Closing now";
-    else if (diffMs < 60000) deadlineInfo = " · Closes < 1 min";
-    else deadlineInfo = ` · Closes in ${Math.ceil(diffMs / 60000)}m`;
+    if (diffMs <= 0) info = " · Closing";
+    else if (diffMs < 60000) info = " · < 1 min";
+    else info = ` · ${Math.ceil(diffMs / 60000)}m left`;
   }
 
   if (saved >= total) {
-    const completed = Math.max(Number(state.shortlist.completedVoterCount || 0), 1);
-    node.textContent = `Your deck is done · ${completed} ${completed === 1 ? "person" : "people"} finished${deadlineInfo}`;
+    node.textContent = `${saved}/${total} done${info}`;
   } else if (saved > 0) {
-    node.textContent = `${saved}/${total} choices saved${deadlineInfo}`;
+    node.textContent = `${saved}/${total}${info}`;
   } else {
-    node.textContent = `Private until your deck is done${deadlineInfo}`;
+    node.textContent = `Swipe or tap to vote${info}`;
   }
   if (progressNode) progressNode.textContent = `${Math.min(state.currentIndex + 1, total)} / ${total}`;
 }
@@ -1408,13 +1515,23 @@ function renderShareBanner() {
   if (state.showShareFlow && state.shareFlowCode === state.shortlist.code) {
     banner.classList.remove("is-hidden");
     if (privateRow) privateRow.classList.add("is-hidden");
-    $("[data-share-url]").textContent = shareUrl();
 
-    // Render per-person magic links
+    // Show the universal share URL
+    const urlEl = $("[data-share-url]");
+    if (urlEl) {
+      urlEl.textContent = shareUrl();
+    }
+
+    // Render per-person magic links (only if participants have been added)
     const linksContainer = $("[data-magic-links]");
     if (linksContainer && state.shareMagicLinks) {
       const names = Object.keys(state.shareMagicLinks);
       if (names.length > 0) {
+        $("[data-share-extras]").classList.remove("is-hidden");
+        // Auto-expand the participant setup when magic links exist
+        $("[data-participant-setup]")?.classList.remove("is-hidden");
+        $("[data-toggle-participants]").textContent = "- Hide participant setup";
+
         linksContainer.innerHTML = names
           .map(
             (name) => `
@@ -1442,7 +1559,9 @@ function renderShareBanner() {
           };
         });
       } else {
-        linksContainer.innerHTML = "";
+        // No participants yet — show the extras toggle
+        $("[data-share-extras]")?.classList.remove("is-hidden");
+        if (linksContainer) linksContainer.innerHTML = "";
       }
     }
   } else {
@@ -1535,61 +1654,6 @@ function syncCurrentIndex() {
   const cards = state.shortlist?.cards || [];
   const nextIndex = cards.findIndex((card) => !state.votedCardIds.has(card.id));
   state.currentIndex = nextIndex === -1 ? cards.length : nextIndex;
-}
-
-function createRenderer() {
-  // Only render create screen enhancements if we're on the create screen
-  if (state.routeScreen !== "create" || state.shortlist) return;
-
-  // Render participant name inputs
-  const container = $("[data-participant-container]");
-  if (container) {
-    const names = state.participants.length > 0 ? state.participants : ["You", "", ""];
-    container.innerHTML = names
-      .map(
-        (name, i) => `
-          <input
-            type="text"
-            data-participant-input
-            class="participant-input"
-            value="${escapeAttr(name)}"
-            placeholder="Participant ${i + 1}"
-            maxlength="40"
-            autocomplete="off"
-          />
-        `
-      )
-      .join("");
-  }
-
-  // Wire up participant add button
-  const addBtn = $("[data-add-participant]");
-  if (addBtn) {
-    addBtn.onclick = () => {
-      const inputs = $$("[data-participant-input]");
-      state.participants = inputs.map((inp) => inp.value).filter(Boolean);
-      state.participants.push("");
-      createRenderer();
-    };
-  }
-
-  // Wire up participant inputs to keep state in sync
-  container?.addEventListener("input", () => {
-    const inputs = $$("[data-participant-input]");
-    state.participants = inputs.map((inp) => inp.value);
-  });
-
-  // Set deadline min to now for the datetime picker
-  const deadlineInput = $("[data-deadline-input]");
-  if (deadlineInput) {
-    if (!deadlineInput.value) {
-      // Default to tomorrow at 9pm
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(21, 0, 0, 0);
-      deadlineInput.value = tomorrow.toISOString().slice(0, 16);
-    }
-  }
 }
 
 function renderParticipationDashboard() {

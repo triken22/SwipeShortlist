@@ -95,30 +95,6 @@
               </div>
               <div class="review-list" data-review-list></div>
             </section>
-
-            <section class="voter-panel" aria-labelledby="voters-title">
-              <h3 id="voters-title">Who's deciding?</h3>
-              <div class="chip-row" data-voter-chips></div>
-              <div class="participant-container" data-participant-container></div>
-              <button class="text-button" type="button" data-add-participant>+ Add participant</button>
-            </section>
-
-            <section class="deadline-panel" aria-label="Set deadline">
-              <h3>Deadline (optional)</h3>
-              <input
-                type="datetime-local"
-                class="deadline-input"
-                data-deadline-input
-                aria-label="Decision deadline"
-              />
-              <button class="deadline" type="button" data-note="Aim set for today at 21:00" style="display:none">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="12" cy="12" r="8" />
-                  <path d="M12 8v5l3 2" />
-                </svg>
-                Aim to decide by 21:00
-              </button>
-            </section>
           </div>
 
           <footer class="bottom-bar">
@@ -150,27 +126,49 @@
             <section class="share-banner is-hidden" data-share-banner aria-label="Share voting link">
               <strong>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-                Created. Share with your group
+                Voting link created
               </strong>
-              <p>Send each person their private voting link:</p>
-              <p><code data-share-url class="is-hidden"></code></p>
-              <div data-magic-links></div>
-              <div class="share-actions">
+              <p>Share this link in your group chat:</p>
+              <div class="share-link-row">
+                <code data-share-url></code>
                 <button class="share-copy" type="button" data-share-copy>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>
-                  Copy voting link
+                  Copy
                 </button>
-                <button class="text-button" type="button" data-share-dismiss>Start voting</button>
+              </div>
+              <div class="share-extras is-hidden" data-share-extras>
+                <hr />
+                <button class="text-button" type="button" data-toggle-participants>
+                  + Add participants for named voting links
+                </button>
+                <div class="participant-setup is-hidden" data-participant-setup>
+                  <div class="participant-container" data-participant-container></div>
+                  <button class="text-button" type="button" data-add-participant>+ Add participant</button>
+                  <button class="primary-action is-small" type="button" data-save-participants>Generate links</button>
+                  <div data-magic-links></div>
+                </div>
+                <button class="text-button" type="button" data-toggle-deadline>
+                  + Set a decision deadline
+                </button>
+                <div class="deadline-setup is-hidden" data-deadline-setup>
+                  <input type="datetime-local" class="deadline-input" data-deadline-input aria-label="Decision deadline" />
+                  <button class="primary-action is-small" type="button" data-save-deadline>Set deadline</button>
+                </div>
+              </div>
+              <div class="share-actions">
+                <button class="primary-action" type="button" data-share-dismiss>
+                  Start voting
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
+                </button>
               </div>
             </section>
 
             <section class="private-row" data-private-row>
-              <strong>Your vote is private until the deck is done</strong>
               <label class="identity-field">
                 <span>Vote as</span>
-                <input type="text" data-voter-name autocomplete="name" maxlength="40" value="You" disabled />
+                <input type="text" data-voter-name autocomplete="name" maxlength="40" value="Guest" disabled />
               </label>
-              <span data-vote-context>Private until you choose</span>
+              <span data-vote-context>Swipe or tap to vote</span>
               <span data-countdown class="countdown is-hidden"></span>
               <span data-voter-progress class="voter-progress is-hidden"></span>
               <div class="avatar-dots" data-avatar-dots aria-label="Participants"></div>

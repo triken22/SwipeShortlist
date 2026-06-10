@@ -1384,6 +1384,125 @@ button.code-pill:hover {
   height: 18px;
 }
 
+/* ── Share link row (new one-link-first flow) ── */
+
+.share-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.share-link-row code {
+  flex: 1;
+  display: block;
+  overflow: hidden;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--espresso);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  word-break: break-all;
+  user-select: all;
+  white-space: nowrap;
+}
+
+.share-link-row .share-copy {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 0.84rem;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Share extras (expandable sections) ── */
+
+.share-extras {
+  display: grid;
+  gap: 8px;
+}
+
+.share-extras hr {
+  border: none;
+  border-top: 1px solid var(--coral);
+  margin: 4px 0;
+  opacity: 0.3;
+}
+
+.participant-setup,
+.deadline-setup {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.participant-setup .participant-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.participant-setup .participant-input {
+  font: inherit;
+  font-family: var(--font-body);
+  font-size: 0.84rem;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  width: 100%;
+  outline: none;
+  background: var(--surface);
+  color: var(--espresso);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.participant-setup .participant-input:focus {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 2px rgba(227, 92, 74, 0.12);
+}
+
+.deadline-setup .deadline-input {
+  font: inherit;
+  font-family: var(--font-body);
+  font-size: 0.84rem;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  width: 100%;
+  outline: none;
+  color: var(--espresso);
+  background: var(--surface);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.deadline-setup .deadline-input:focus {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 2px rgba(227, 92, 74, 0.12);
+}
+
+.share-extras .text-button {
+  min-height: 36px;
+  padding: 6px 4px;
+  font-size: 0.84rem;
+  justify-self: start;
+}
+
+/* ── Small primary action variant ── */
+
+.primary-action.is-small {
+  min-height: 38px;
+  padding: 6px 14px;
+  font-size: 0.84rem;
+  border-radius: var(--radius-sm);
+  justify-self: start;
+}
+
+.primary-action.is-small:active {
+  transform: translateY(0);
+}
+
 /* ── Utilities ── */
 
 .is-hidden {
@@ -1814,8 +1933,7 @@ button.code-pill:hover {
     font-size: 0.88rem;
   }
 
-  .share-banner p,
-  .share-banner code {
+  .share-banner p {
     display: none;
   }
 
@@ -1834,6 +1952,17 @@ button.code-pill:hover {
     min-height: 38px;
     padding: 8px 12px;
     font-size: 0.82rem;
+  }
+
+  .share-link-row code {
+    font-size: 0.68rem;
+    padding: 8px 10px;
+  }
+
+  .share-link-row .share-copy {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 0.78rem;
   }
 
   .share-actions .text-button {
