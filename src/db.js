@@ -200,9 +200,9 @@ export function createShortlist({ title = DEFAULT_TITLE, participants = [], dead
   const insertShortlist = db.prepare("INSERT INTO shortlists (code, title, deadline_label, deadline) VALUES (?, ?, ?, ?)");
   const insertCard = db.prepare(`
     INSERT INTO cards (
-      shortlist_id, title, source_domain, source_url, location, price_label,
-      facts_json, trust_label, image_path, sort_order
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      shortlist_id, title, source_domain, source_url, description, image_url,
+      location, price_label, facts_json, trust_label, image_path, sort_order
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVoter = db.prepare("INSERT INTO voters (shortlist_id, voter_key, voter_token, name, initials, is_owner) VALUES (?, ?, ?, ?, ?, ?)");
 
@@ -218,6 +218,8 @@ export function createShortlist({ title = DEFAULT_TITLE, participants = [], dead
         card.title,
         card.sourceDomain,
         card.sourceUrl,
+        card.description || null,
+        card.imageUrl || null,
         card.location,
         card.priceLabel,
         JSON.stringify(card.facts),

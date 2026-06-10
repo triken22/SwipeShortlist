@@ -656,17 +656,19 @@ button.code-pill:hover {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 8px 24px rgba(42, 31, 27, 0.06);
+  box-shadow: 0 6px 20px rgba(42, 31, 27, 0.05);
 }
 
 .card-stack::before {
   top: 14px;
   transform: rotate(1.8deg);
+  z-index: 0;
 }
 
 .card-stack::after {
   top: 7px;
   transform: rotate(-1.4deg);
+  z-index: 0;
 }
 
 .vote-card {
@@ -680,14 +682,32 @@ button.code-pill:hover {
   box-shadow: var(--shadow-card);
   touch-action: pan-y;
   transition:
-    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 200ms ease;
+    transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 300ms ease;
   user-select: none;
+  will-change: transform;
 }
 
 .vote-card.is-dragging {
   cursor: grabbing;
   transition: none;
+  box-shadow: 0 24px 64px rgba(42, 31, 27, 0.16);
+}
+
+.vote-card:not(.is-dragging):not(.is-empty-card) {
+  transition:
+    transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 350ms ease;
+}
+
+.card-body.is-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  text-align: center;
+  color: var(--stone);
 }
 
 .vote-card::before {
@@ -814,6 +834,15 @@ button.code-pill:hover {
   color: var(--espresso);
 }
 
+.card-desc {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  line-height: 1.35;
+  color: var(--stone);
+  font-weight: 400;
+}
+
 .price {
   font-family: var(--font-body);
   font-size: 1.02rem;
@@ -904,17 +933,31 @@ button.code-pill:hover {
 
 .swipe-cue {
   position: absolute;
-  right: 10px;
-  bottom: 0;
-  left: 10px;
+  right: 14px;
+  bottom: 4px;
+  left: 14px;
   display: flex;
   justify-content: space-between;
   color: var(--stone);
   font-family: var(--font-body);
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 500;
-  text-transform: uppercase;
   letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.swipe-cue span {
+  opacity: 0.6;
+}
+
+.swipe-cue span:first-child {
+  color: var(--rose);
+  opacity: 0.5;
+}
+
+.swipe-cue span:last-child {
+  color: var(--coral);
+  opacity: 0.5;
 }
 
 /* ── Bottom Bar ── */
@@ -1000,16 +1043,23 @@ button.code-pill:hover {
   border-radius: var(--radius);
   background: var(--surface);
   touch-action: manipulation;
-  transition: transform 100ms ease, border-color 120ms ease, background 120ms ease;
+  transition: transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1),
+              border-color 120ms ease,
+              background 120ms ease,
+              box-shadow 120ms ease;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .vote-button:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   border-color: currentColor;
+  box-shadow: 0 4px 14px rgba(42, 31, 27, 0.06);
 }
 
 .vote-button:active {
-  transform: scale(0.96);
+  transform: scale(0.94);
+  box-shadow: none;
 }
 
 .vote-button strong {
@@ -1094,6 +1144,15 @@ button.code-pill:hover {
 .vote-feedback p {
   justify-content: start;
   text-align: left;
+  transition: color 200ms ease;
+}
+
+[data-vote-status] {
+  font-weight: 500;
+}
+
+[data-send-status] {
+  transition: color 200ms ease;
 }
 
 .undo-button {
@@ -1137,6 +1196,16 @@ button.code-pill:hover {
 
 .result-hero p svg {
   stroke: var(--coral);
+}
+
+.result-hero p svg path:first-child {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: result-check 400ms ease forwards 100ms;
+}
+
+@keyframes result-check {
+  to { stroke-dashoffset: 0; }
 }
 
 /* ── Winner Card ── */
@@ -1228,6 +1297,34 @@ button.code-pill:hover {
   font-family: var(--font-body);
   font-size: 0.72rem;
   font-weight: 500;
+}
+
+.score.is-yes {
+  background: var(--coral-soft);
+}
+
+.score.is-yes strong {
+  color: var(--coral);
+}
+
+.score.is-hold {
+  background: var(--amber-soft);
+}
+
+.score.is-hold strong {
+  color: var(--amber);
+}
+
+.score.is-no {
+  background: var(--rose-soft);
+}
+
+.score.is-no strong {
+  color: var(--rose);
+}
+
+.score.is-abstain strong {
+  color: var(--grey);
 }
 
 .score-row.is-tied .score:first-child,
@@ -2228,11 +2325,12 @@ button.code-pill:hover {
 
 .countdown {
   font-family: var(--font-body);
-  font-size: 0.82rem;
-  color: var(--stone);
+  font-size: 0.78rem;
+  color: var(--coral);
   display: block;
   margin-top: 4px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .countdown:not(.is-hidden) {
@@ -2243,7 +2341,7 @@ button.code-pill:hover {
 
 .voter-progress {
   font-family: var(--font-body);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--stone);
   display: block;
   margin-top: 4px;
@@ -2253,6 +2351,7 @@ button.code-pill:hover {
 .voter-progress:not(.is-hidden) {
   display: inline;
 }
+
 
 /* ── Participation Dashboard ── */
 

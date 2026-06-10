@@ -168,6 +168,7 @@ function wireControls() {
     state.draftCards.push({
       sourceUrl: cleanUrl || `manual-${Date.now()}`,
       title,
+      description: desc || null,
       priceLabel: desc ? desc.slice(0, 40) : "Manual entry",
       location: domain || "Manual option",
       facts: desc ? [desc.slice(0, 80)] : [],
@@ -595,24 +596,30 @@ function renderCurrentCard() {
   }
 
   const hasSource = card.sourceUrl && !card.sourceUrl.startsWith("manual-");
+  const isManual = !hasSource;
+  const domainLabel = isManual ? "" : escapeHtml(card.sourceDomain);
+  const locationLabel = isManual && card.location === "Manual option" ? "" : escapeHtml(card.location);
+  const priceLabel = isManual ? "" : card.priceLabel;
+  const trustLabel = isManual ? "" : card.trustLabel;
 
   target.innerHTML = `
     ${cardMediaMarkup(card, "card-media")}
     <div class="card-body">
-      <span class="domain">${escapeHtml(card.sourceDomain)}</span>
+      ${domainLabel ? `<span class="domain">${domainLabel}</span>` : ""}
       <h2>${escapeHtml(card.title)}</h2>
-      ${card.priceLabel ? `<strong class="price">${escapeHtml(card.priceLabel)}</strong>` : ""}
-      <span class="location">
+      ${card.description ? `<p class="card-desc">${escapeHtml(card.description)}</p>` : ""}
+      ${priceLabel ? `<strong class="price">${escapeHtml(priceLabel)}</strong>` : ""}
+      ${locationLabel ? `<span class="location">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
-        ${escapeHtml(card.location)}
-      </span>
-      <div class="fact-row">
+        ${locationLabel}
+      </span>` : ""}
+      ${card.facts?.length ? `<div class="fact-row">
         ${card.facts.map((fact) => `<span class="fact">${escapeHtml(fact)}</span>`).join("")}
-      </div>
-      <span class="trust">
+      </div>` : ""}
+      ${trustLabel ? `<span class="trust">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-        <span>${escapeHtml(card.trustLabel)}</span>
-      </span>
+        <span>${escapeHtml(trustLabel)}</span>
+      </span>` : ""}
       ${hasSource ? `<a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">
         Open source link
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
@@ -655,27 +662,29 @@ async function renderResults() {
   $("[data-result-subheading]").textContent = rationale?.detail || "Everyone can live with this pick. Send it and stop the thread.";
   $("[data-send-final]").innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
   $("[data-send-status]").textContent = "Ready to copy for the group chat.";
+  const winnerIsManual = !winner.sourceUrl || winner.sourceUrl.startsWith("manual-");
   $("[data-winner-card]").innerHTML = `
     ${cardMediaMarkup(winner, "winner-media")}
     <div class="winner-body">
-      <span class="domain">${escapeHtml(winner.sourceDomain)}</span>
+      ${!winnerIsManual ? `<span class="domain">${escapeHtml(winner.sourceDomain)}</span>` : ""}
       <h3>${escapeHtml(winner.title)}</h3>
-      <strong class="price">${escapeHtml(winner.priceLabel)}</strong>
-      <span class="location">
+      ${winner.description ? `<p class="card-desc">${escapeHtml(winner.description)}</p>` : ""}
+      ${!winnerIsManual && winner.priceLabel ? `<strong class="price">${escapeHtml(winner.priceLabel)}</strong>` : ""}
+      ${(winner.location && winner.location !== "Manual option") ? `<span class="location">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
         ${escapeHtml(winner.location)}
-      </span>
+      </span>` : ""}
       ${voteMarkup}
       <div class="score-row ${rationaleClass}">
-        <span class="score"><strong>${winner.yesCount}</strong><span>yes</span></span>
-        <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
-        <span class="score"><strong>${winner.noCount}</strong><span>no</span></span>
-        ${winner.abstainCount ? `<span class="score"><strong>${winner.abstainCount}</strong><span>abstain</span></span>` : ""}
+        <span class="score is-yes"><strong>${winner.yesCount}</strong><span>yes</span></span>
+        <span class="score is-hold"><strong>${winner.holdCount}</strong><span>hold</span></span>
+        <span class="score is-no"><strong>${winner.noCount}</strong><span>no</span></span>
+        ${winner.abstainCount ? `<span class="score is-abstain"><strong>${Number(winner.abstainCount)}</strong><span>skip</span></span>` : ""}
       </div>
       <div class="rationale-box">
         <p>${escapeHtml(rationale?.detail || "")}</p>
       </div>
-      ${winner.sourceUrl && !winner.sourceUrl.startsWith("manual-") ? `<a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
+      ${!winnerIsManual ? `<a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
         Open final link
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
       </a>` : ""}
@@ -920,16 +929,22 @@ async function loadPublicResults(code) {
 
     if (winner) {
       const hasSource = winner.sourceUrl && !winner.sourceUrl.startsWith("manual-");
+      const isManual = !hasSource;
       $("[data-public-winner]").innerHTML = `
         <div class="winner-body">
-          <span class="domain">${escapeHtml(winner.sourceDomain)}</span>
+          ${!isManual ? `<span class="domain">${escapeHtml(winner.sourceDomain)}</span>` : ""}
           <h3>${escapeHtml(winner.title)}</h3>
-          ${winner.priceLabel ? `<strong class="price">${escapeHtml(winner.priceLabel)}</strong>` : ""}
+          ${winner.description ? `<p class="card-desc">${escapeHtml(winner.description)}</p>` : ""}
+          ${!isManual && winner.priceLabel ? `<strong class="price">${escapeHtml(winner.priceLabel)}</strong>` : ""}
+          ${(winner.location && winner.location !== "Manual option") ? `<span class="location">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
+            ${escapeHtml(winner.location)}
+          </span>` : ""}
           <div class="score-row">
-            <span class="score"><strong>${winner.yesCount}</strong><span>yes</span></span>
-            <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
-            <span class="score"><strong>${winner.noCount}</strong><span>no</span></span>
-            ${winner.abstainCount ? `<span class="score"><strong>${winner.abstainCount}</strong><span>abstain</span></span>` : ""}
+            <span class="score is-yes"><strong>${winner.yesCount}</strong><span>yes</span></span>
+            <span class="score is-hold"><strong>${winner.holdCount}</strong><span>hold</span></span>
+            <span class="score is-no"><strong>${winner.noCount}</strong><span>no</span></span>
+            ${winner.abstainCount ? `<span class="score is-abstain"><strong>${Number(winner.abstainCount)}</strong><span>skip</span></span>` : ""}
           </div>
           ${hasSource ? `<a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">Open link <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg></a>` : ""}
         </div>
