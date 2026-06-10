@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { randomInt } from "node:crypto";
+import { randomInt, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { linkContextForUrl } from "../public/link-context.js";
 
@@ -117,9 +117,65 @@ export function migrate() {
     ON voters(shortlist_id, voter_key)
     WHERE voter_key IS NOT NULL;
   `);
+
+  // Phase 1: voter_token for magic link identity
+  ensureColumn("voters", "voter_token", "TEXT");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS voters_shortlist_token_idx
+    ON voters(shortlist_id, voter_token)
+    WHERE voter_token IS NOT NULL;
+  `);
+
+  // Phase 1: deadline and finalization for shortlists
+  ensureColumn("shortlists", "deadline", "TEXT");
+  ensureColumn("shortlists", "finalized", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn("shortlists", "finalized_at", "TEXT");
+
+  // Phase 2: tiebreaker columns
+  ensureColumn("shortlists", "tiebreaker", "TEXT");
+  ensureColumn("shortlists", "tiebreaker_winner_card_id", "INTEGER");
+
+  // Phase 2: universal decisions
+  ensureColumn("cards", "description", "TEXT");
+  ensureColumn("cards", "image_url", "TEXT");
+
+  // Phase 2: Extend votes CHECK constraint to include 'abstain'
+  try {
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.exec("INSERT INTO votes (shortlist_id, card_id, voter_id, vote) VALUES (0, 0, 0, 'abstain')");
+    db.exec("DELETE FROM votes WHERE voter_id = 0");
+    db.exec("PRAGMA foreign_keys = ON");
+  } catch {
+    // Constraint missing — recreate votes table with extended check
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.exec(`
+      DROP TABLE IF EXISTS votes_new;
+      CREATE TABLE votes_new (
+        id INTEGER PRIMARY KEY,
+        shortlist_id INTEGER NOT NULL REFERENCES shortlists(id) ON DELETE CASCADE,
+        card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+        voter_id INTEGER NOT NULL REFERENCES voters(id) ON DELETE CASCADE,
+        vote TEXT NOT NULL CHECK (vote IN ('yes', 'no', 'hold', 'strong_yes', 'abstain')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(card_id, voter_id)
+      );
+      INSERT INTO votes_new SELECT * FROM votes;
+      DROP TABLE votes;
+      ALTER TABLE votes_new RENAME TO votes;
+    `);
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+
+  // Phase 3: Auto-cleanup shortlists older than 90 days (best-effort)
+  try {
+    db.exec("DELETE FROM shortlists WHERE created_at < datetime('now', '-90 days')");
+  } catch {
+    // no-op
+  }
 }
 
-export function createShortlist({ title = DEFAULT_TITLE, participants = [], deadlineLabel = DEFAULT_DEADLINE_LABEL, links = [], cards = null } = {}) {
+export function createShortlist({ title = DEFAULT_TITLE, participants = [], deadlineLabel = DEFAULT_DEADLINE_LABEL, deadline = null, links = [], cards = null } = {}) {
   const code = nextCode();
   let cardsToCreate;
   if (Array.isArray(cards)) {
@@ -139,18 +195,22 @@ export function createShortlist({ title = DEFAULT_TITLE, participants = [], dead
   }
 
   const participantNames = normalizeParticipants(participants);
-  const insertShortlist = db.prepare("INSERT INTO shortlists (code, title, deadline_label) VALUES (?, ?, ?)");
+  const cleanDeadlineVal = deadline && typeof deadline === "string" ? deadline.trim() : null;
+
+  const insertShortlist = db.prepare("INSERT INTO shortlists (code, title, deadline_label, deadline) VALUES (?, ?, ?, ?)");
   const insertCard = db.prepare(`
     INSERT INTO cards (
       shortlist_id, title, source_domain, source_url, location, price_label,
       facts_json, trust_label, image_path, sort_order
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const insertVoter = db.prepare("INSERT INTO voters (shortlist_id, voter_key, name, initials, is_owner) VALUES (?, ?, ?, ?, ?)");
+  const insertVoter = db.prepare("INSERT INTO voters (shortlist_id, voter_key, voter_token, name, initials, is_owner) VALUES (?, ?, ?, ?, ?, ?)");
+
+  const baseUrl = process.env.SHORTLIST_BASE_URL || `http://localhost:${process.env.PORT || 8092}`;
 
   db.exec("BEGIN");
   try {
-    const shortlistResult = insertShortlist.run(code, cleanTitle(title), cleanDeadline(deadlineLabel));
+    const shortlistResult = insertShortlist.run(code, cleanTitle(title), cleanDeadline(deadlineLabel), cleanDeadlineVal);
     const shortlistId = Number(shortlistResult.lastInsertRowid);
     cardsToCreate.forEach((card, index) => {
       insertCard.run(
@@ -167,12 +227,17 @@ export function createShortlist({ title = DEFAULT_TITLE, participants = [], dead
       );
     });
 
+    const magicLinks = {};
     participantNames.forEach((name, index) => {
-      insertVoter.run(shortlistId, `invite-${index + 1}-${slugFor(name)}`, name, initialsFor(name), index === 0 ? 1 : 0);
+      const voterToken = generateVoterToken();
+      const voterKey = `magic-${index + 1}-${slugFor(name)}`;
+      insertVoter.run(shortlistId, voterKey, voterToken, name, initialsFor(name), index === 0 ? 1 : 0);
+      magicLinks[name] = `${baseUrl}/#/vote/${code}?t=${voterToken}`;
     });
 
     db.exec("COMMIT");
-    return getShortlist(code, { includeVotes: false });
+    const shortlist = getShortlist(code, { includeVotes: false });
+    return { ...shortlist, magicLinks };
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
@@ -204,22 +269,36 @@ export function getShortlist(code, { includeVotes = false } = {}) {
         .get(shortlist.id, cards.length).count
     : 0;
 
+  // Phase 1: lazy auto-finalize check
+  if (!shortlist.finalized && shortlist.deadline && new Date(shortlist.deadline) <= new Date()) {
+    finalizeShortlist(shortlist.id);
+    shortlist.finalized = 1;
+    shortlist.finalized_at = new Date().toISOString();
+  }
+
   return {
     id: shortlist.id,
     code: shortlist.code,
     title: shortlist.title,
     deadlineLabel: shortlist.deadline_label,
+    deadline: shortlist.deadline || null,
+    finalized: Boolean(shortlist.finalized),
+    finalizedAt: shortlist.finalized_at || null,
     cards,
     voters,
     votedCount,
     completedVoterCount,
-    votes
+    votes,
+    participation: includeVotes ? getParticipationData(shortlist.id, cards.length) : null
   };
 }
 
 export function recordVote({ code, cardId, voterKey, voterName = "Guest", vote }) {
   const shortlist = db.prepare("SELECT * FROM shortlists WHERE code = ?").get(code);
   if (!shortlist) return null;
+
+  // Phase 1: Cannot vote after finalization
+  if (shortlist.finalized) throw new Error("Voting is closed — this decision has been finalized.");
 
   const voter = ensureVoter(shortlist.id, { voterKey, voterName });
 
@@ -238,6 +317,9 @@ export function recordVote({ code, cardId, voterKey, voterName = "Guest", vote }
 export function deleteVote({ code, cardId, voterKey, voterName = "Guest" }) {
   const shortlist = db.prepare("SELECT * FROM shortlists WHERE code = ?").get(code);
   if (!shortlist) return null;
+
+  // Phase 1: Cannot undo after finalization
+  if (shortlist.finalized) throw new Error("Voting is closed — this decision has been finalized.");
 
   const voter = findVoter(shortlist.id, { voterKey, voterName });
   if (!voter) throw new Error("Unknown voter");
@@ -264,6 +346,9 @@ export function hasVoterCompleted(code, voter = {}) {
   const existing = findVoter(shortlist.id, normalizeVoterInput(voter));
   if (!existing) return false;
 
+  // Phase 1: Check if shortlist is finalized — if so, no completion check needed
+  if (shortlist.finalized) return true;
+
   const cardCount = Number(db.prepare("SELECT COUNT(*) AS count FROM cards WHERE shortlist_id = ?").get(shortlist.id)?.count || 0);
   if (!cardCount) return false;
 
@@ -274,15 +359,17 @@ export function hasVoterCompleted(code, voter = {}) {
   return voteCount >= cardCount;
 }
 
-export function getResults(code) {
+export function getResults(code, { isPublic = false } = {}) {
+  // Always load votes for scoring — strip voter identities from response for public
   const shortlist = getShortlist(code, { includeVotes: true });
   if (!shortlist) return null;
 
   const votersById = new Map(shortlist.voters.map((voter) => [voter.id, voter]));
   const votesByCard = new Map();
-  shortlist.votes.forEach((vote) => {
+  (shortlist.votes || []).forEach((vote) => {
     const group = votesByCard.get(vote.cardId) || [];
-    group.push({ ...vote, voter: votersById.get(vote.voterId) });
+    // For public results, don't attach voter object to votes
+    group.push(isPublic ? { vote: vote.vote, cardId: vote.cardId } : { ...vote, voter: votersById.get(vote.voterId) });
     votesByCard.set(vote.cardId, group);
   });
 
@@ -293,29 +380,89 @@ export function getResults(code) {
       const strongYesCount = cardVotes.filter((vote) => vote.vote === "strong_yes").length;
       const holdCount = cardVotes.filter((vote) => vote.vote === "hold").length;
       const noCount = cardVotes.filter((vote) => vote.vote === "no").length;
+      const abstainCount = cardVotes.filter((vote) => vote.vote === "abstain").length;
       return {
         ...card,
-        votes: cardVotes,
+        votes: isPublic ? [] : cardVotes,
         yesCount,
         strongYesCount,
         holdCount,
         noCount,
+        abstainCount,
         score: yesCount * 2 + strongYesCount + holdCount - noCount * 3
       };
     })
     .sort((a, b) => b.score - a.score || a.sortOrder - b.sortOrder);
 
   const winner = rankedCards[0] || null;
-  const rationale = winner ? getWinnerRationale(rankedCards, shortlist) : null;
+  const runnerUp = rankedCards[1] || null;
+
+  // Detect ties
+  const ties = [];
+  if (winner && runnerUp && winner.score === runnerUp.score) {
+    for (let i = 0; i < rankedCards.length; i++) {
+      if (rankedCards[i].score === rankedCards[0].score) {
+        ties.push({ card: rankedCards[i], score: rankedCards[i].score });
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Load tiebreaker info
+  const shortlistRow = db.prepare("SELECT tiebreaker, tiebreaker_winner_card_id FROM shortlists WHERE id = ?").get(shortlist.id);
+  const tiebreaker = shortlistRow?.tiebreaker || null;
+  const tiebreakerWinnerCardId = shortlistRow?.tiebreaker_winner_card_id || null;
+
+  // If tiebreaker resolved, re-rank with winner first
+  let finalWinner = winner;
+  if (tiebreakerWinnerCardId) {
+    const tieWinCard = rankedCards.find((c) => c.id === tiebreakerWinnerCardId);
+    if (tieWinCard) {
+      finalWinner = tieWinCard;
+      // Re-sort with tiebreaker winner first among ties
+      rankedCards.sort((a, b) => {
+        if (a.id === tiebreakerWinnerCardId) return -1;
+        if (b.id === tiebreakerWinnerCardId) return 1;
+        return b.score - a.score || a.sortOrder - b.sortOrder;
+      });
+    }
+  }
+
+  const rationale = finalWinner ? getWinnerRationale(rankedCards, shortlist, tiebreaker) : null;
   return {
     shortlist,
-    winner,
+    winner: finalWinner,
     backups: rankedCards.slice(1, 3),
-    rationale
+    rationale,
+    ties: ties.length > 0 ? ties : undefined,
+    tiebreaker: tiebreaker || undefined,
+    tiebreakerWinnerCardId: tiebreakerWinnerCardId || undefined
   };
 }
 
-function getWinnerRationale(rankedCards, shortlist) {
+// Phase 2: Resolve a tie by setting the tiebreaker
+export function resolveTie(code, { tiebreaker, winnerCardId }) {
+  if (!["creator_pick", "first_wins"].includes(tiebreaker)) throw new Error("Invalid tiebreaker type");
+  const shortlist = db.prepare("SELECT id FROM shortlists WHERE code = ?").get(code);
+  if (!shortlist) return null;
+
+  if (tiebreaker === "first_wins") {
+    const firstTied = db
+      .prepare("SELECT id FROM cards WHERE shortlist_id = ? ORDER BY sort_order LIMIT 1")
+      .get(shortlist.id);
+    if (!firstTied) throw new Error("No cards found");
+    db.prepare("UPDATE shortlists SET tiebreaker = ?, tiebreaker_winner_card_id = ? WHERE id = ?")
+      .run(tiebreaker, firstTied.id, shortlist.id);
+  } else if (tiebreaker === "creator_pick" && winnerCardId) {
+    db.prepare("UPDATE shortlists SET tiebreaker = ?, tiebreaker_winner_card_id = ? WHERE id = ?")
+      .run(tiebreaker, winnerCardId, shortlist.id);
+  }
+
+  return getResults(code);
+}
+
+function getWinnerRationale(rankedCards, shortlist, tiebreaker = null) {
   if (!rankedCards.length) return null;
   const winner = rankedCards[0];
   const runnerUp = rankedCards[1];
@@ -324,7 +471,8 @@ function getWinnerRationale(rankedCards, shortlist) {
   const winnerVoterCount = winner.votes?.length || totalVoters;
   const vetoThreshold = Math.ceil(winnerVoterCount / 2);
   const hasVeto = winner.noCount >= vetoThreshold && winner.noCount > 0;
-  const tied = runnerUp && winner.score === runnerUp.score;
+  // If a tiebreaker was resolved, the tie should not be reported as pending
+  const tied = !tiebreaker && runnerUp && winner.score === runnerUp.score;
   const isContested = winner.noCount > winner.yesCount;
 
   let summary, detail;
@@ -345,9 +493,15 @@ function getWinnerRationale(rankedCards, shortlist) {
       : `"${winner.title}" had the weakest objections — no strong No signals`;
   }
 
+  // If tiebreaker resolved, update summary and detail
+  const resolvedSummary = tiebreaker ? "clear" : summary;
+  const resolvedDetail = tiebreaker
+    ? `"${winner.title}" won after breaking the tie`
+    : detail;
+
   return {
-    summary,
-    detail,
+    summary: resolvedSummary,
+    detail: resolvedDetail,
     noCount: winner.noCount,
     yesCount: winner.yesCount,
     holdCount: winner.holdCount,
@@ -355,7 +509,8 @@ function getWinnerRationale(rankedCards, shortlist) {
     backupTitle: runnerUp?.title || null,
     backupUrl: runnerUp?.sourceUrl || null,
     tied: tied && !!runnerUp,
-    copyText: getCopyText(winner, runnerUp, summary)
+    tiebreakerResolved: !!tiebreaker,
+    copyText: getCopyText(winner, runnerUp, resolvedSummary)
   };
 }
 
@@ -370,8 +525,8 @@ function getCopyText(winner, runnerUp, summary) {
   return text;
 }
 
-export function getWinnerRationalePublic(rankedCards, shortlist) {
-  return getWinnerRationale(rankedCards, shortlist);
+export function getWinnerRationalePublic(rankedCards, shortlist, tiebreaker = null) {
+  return getWinnerRationale(rankedCards, shortlist, tiebreaker);
 }
 
 function nextCode() {
@@ -429,29 +584,56 @@ function cardsFromDraftCards(draftCards) {
   return draftCards
     .slice(0, MAX_LINKS)
     .map((card) => {
-      try {
-        const url = new URL(card.sourceUrl);
-        if (!["http:", "https:"].includes(url.protocol)) return null;
-        const domain = url.hostname.replace(/^www\./, "");
-        const linkContext = linkContextForUrl(url.toString());
-        const facts = Array.isArray(card.facts) ? card.facts.map((f) => String(f || "").trim()).filter(Boolean) : [];
-        const fallbackFacts = linkContext?.facts || ["Imported link", "Needs check"];
-        const title = String(card.title || "").trim();
-        return {
-          title: (title || linkContext?.title || titleFromUrl(url)).slice(0, 72),
-          sourceDomain: domain,
-          sourceUrl: linkContext?.canonicalUrl || url.toString(),
-          location: (card.location || linkContext?.location || domain).slice(0, 80),
-          priceLabel: (card.priceLabel || "Price to verify").slice(0, 40),
-          facts: facts.length > 0 ? facts.slice(0, 6) : fallbackFacts,
-          trustLabel: facts.length > 0
-            ? "Context from your pasted text · verify details before deciding"
-            : linkContext?.trustLabel || "Imported from pasted link · verify details before deciding",
-          imagePath: (card.imagePath && cleanImageUrl(card.imagePath)) || DEFAULT_CARD_IMAGE
-        };
-      } catch {
-        return null;
+      // Support both link-based and manual cards
+      let title = String(card.title || "").trim();
+
+      let sourceUrl = "";
+      let sourceDomain = "";
+      let linkContext = null;
+
+      if (card.sourceUrl && !card.sourceUrl.startsWith("manual-")) {
+        try {
+          const url = new URL(card.sourceUrl);
+          if (!["http:", "https:"].includes(url.protocol)) return null;
+          sourceUrl = url.toString();
+          sourceDomain = url.hostname.replace(/^www\./, "");
+          linkContext = linkContextForUrl(sourceUrl);
+        } catch {
+          // Not a valid URL, treat as manual card
+        }
       }
+
+      // Fall back to URL-derived title if none provided
+      if (!title && sourceUrl) {
+        try {
+          const url = new URL(sourceUrl);
+          title = linkContext?.title || titleFromUrl(url);
+        } catch {
+          title = `Link from ${sourceDomain || "web"}`;
+        }
+      }
+
+      // Manual cards without title are invalid
+      if (!title) return null;
+
+      const facts = Array.isArray(card.facts) ? card.facts.map((f) => String(f || "").trim()).filter(Boolean) : [];
+      const fallbackFacts = linkContext?.facts || (sourceDomain ? ["Imported link", "Needs check"] : []);
+      const hasFacts = facts.length > 0;
+
+      return {
+        title: title.slice(0, 72),
+        sourceDomain: sourceDomain || "Manual entry",
+        sourceUrl: sourceUrl || "",
+        description: String(card.description || "").trim().slice(0, 200) || null,
+        imageUrl: (card.imagePath && cleanImageUrl(card.imagePath)) || null,
+        location: (card.location || linkContext?.location || sourceDomain || "Manual option").slice(0, 80),
+        priceLabel: (card.priceLabel || (sourceDomain ? "Price to verify" : "")).slice(0, 40),
+        facts: hasFacts ? facts.slice(0, 6) : fallbackFacts,
+        trustLabel: hasFacts
+          ? "Context from your pasted text · verify details before deciding"
+          : (linkContext?.trustLabel || (sourceDomain ? "Imported from pasted link · verify details before deciding" : "Manual entry · no source link")),
+        imagePath: (card.imagePath && cleanImageUrl(card.imagePath)) || DEFAULT_CARD_IMAGE
+      };
     })
     .filter(Boolean);
 }
@@ -503,11 +685,14 @@ function initialsFor(name) {
 }
 
 function cardFromRow(row) {
+  // Phase 1: universal decisions — update cardFromRow for nullable source_url + new columns
   return {
     id: row.id,
     title: row.title,
     sourceDomain: row.source_domain,
     sourceUrl: row.source_url,
+    description: row.description || null,
+    imageUrl: row.image_url || null,
     location: row.location,
     priceLabel: row.price_label,
     facts: JSON.parse(row.facts_json),
@@ -577,6 +762,18 @@ function findVoter(shortlistId, voter) {
     const byKey = db.prepare("SELECT * FROM voters WHERE shortlist_id = ? AND voter_key = ?").get(shortlistId, voterKey);
     if (byKey) return byKey;
     if (rawName) {
+      // Match by name if the existing voter was pre-created via magic link (has voter_token)
+      // This prevents duplicate voters when magic link participants vote via the API
+      const byNameWithToken = db
+        .prepare(
+          `SELECT * FROM voters
+           WHERE shortlist_id = ? AND lower(name) = lower(?)
+           AND voter_token IS NOT NULL AND voter_token != ''`
+        )
+        .get(shortlistId, cleanVoterName(rawName));
+      if (byNameWithToken) return byNameWithToken;
+
+      // Legacy fallback for old voters
       const legacyByName = db
         .prepare(
           `SELECT *
@@ -658,4 +855,67 @@ function slugFor(value) {
       .replace(/\s+/g, "-")
       .replace(/[^a-z0-9-]/g, "")
   );
+}
+
+// Phase 1: Generate a cryptographically random voter token for magic links
+function generateVoterToken() {
+  return randomBytes(16).toString("base64url");
+}
+
+// Phase 1: Resolve a voter token to a voter identity
+export function resolveVoterByToken(code, token) {
+  if (!token || !code) return null;
+  const shortlist = db.prepare("SELECT id FROM shortlists WHERE code = ?").get(code);
+  if (!shortlist) return null;
+  const voter = db
+    .prepare("SELECT * FROM voters WHERE shortlist_id = ? AND voter_token = ?")
+    .get(shortlist.id, token);
+  if (!voter) return null;
+  return voterFromRow(voter);
+}
+
+// Phase 1: Finalize a shortlist (compute results, set finalized flags)
+function finalizeShortlist(shortlistId) {
+  const now = new Date().toISOString();
+  db.prepare("UPDATE shortlists SET finalized = 1, finalized_at = ? WHERE id = ? AND finalized = 0").run(now, shortlistId);
+}
+
+// Phase 1: Check if a shortlist is past its deadline (and finalize if so)
+export function checkAndFinalize(code) {
+  const shortlist = db.prepare("SELECT id, deadline, finalized FROM shortlists WHERE code = ?").get(code);
+  if (!shortlist) return null;
+  if (!shortlist.finalized && shortlist.deadline && new Date(shortlist.deadline) <= new Date()) {
+    finalizeShortlist(shortlist.id);
+    return true;
+  }
+  return Boolean(shortlist.finalized);
+}
+
+// Phase 1: Get participation data per voter for a shortlist
+function getParticipationData(shortlistId, totalCards) {
+  const voters = db.prepare("SELECT * FROM voters WHERE shortlist_id = ? ORDER BY id").all(shortlistId);
+  totalCards = totalCards || Number(db.prepare("SELECT COUNT(*) AS count FROM cards WHERE shortlist_id = ?").get(shortlistId)?.count || 0);
+
+  return voters.map((voter) => {
+    const votedCards = Number(
+      db.prepare("SELECT COUNT(DISTINCT card_id) AS count FROM votes WHERE shortlist_id = ? AND voter_id = ?")
+        .get(shortlistId, voter.id)?.count || 0
+    );
+    return {
+      name: voter.name,
+      initials: String(voter.initials || voter.name[0] || "?").slice(0, 2).toUpperCase(),
+      isOwner: Boolean(voter.is_owner),
+      completedCardCount: votedCards,
+      totalCards,
+      isCompleted: totalCards > 0 && votedCards >= totalCards
+    };
+  });
+}
+
+// Phase 1: Get participation data for the dashboard endpoint
+export function getParticipation(code) {
+  const shortlist = db.prepare("SELECT id FROM shortlists WHERE code = ?").get(code);
+  if (!shortlist) return null;
+  const totalCards = Number(db.prepare("SELECT COUNT(*) AS count FROM cards WHERE shortlist_id = ?").get(shortlist.id)?.count || 0);
+  return { participants: getParticipationData(shortlist.id, totalCards) };
 }

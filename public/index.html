@@ -10,6 +10,9 @@
     />
     <meta name="theme-color" content="#ffffff" />
     <link rel="icon" href="/assets/link-card.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,300;1,9..40,500;1,9..40,600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -33,28 +36,48 @@
               <p>Paste the mess. Send one voting link. Stop chasing replies.</p>
             </section>
 
-            <section class="paste-box" aria-label="Paste links">
-              <button class="paste-action" type="button" data-paste-clipboard>
-                <span>
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M10.5 13.5 13.5 10.5" />
-                    <path d="M8.5 15.5a4 4 0 0 1 0-5.7l1.8-1.8a4 4 0 0 1 5.7 0" />
-                    <path d="M15.5 8.5a4 4 0 0 1 0 5.7l-1.8 1.8a4 4 0 0 1-5.7 0" />
-                  </svg>
-                </span>
-                Paste from clipboard
-              </button>
-              <textarea
-                class="link-input is-hidden"
-                data-link-input
-                rows="3"
-                aria-label="Paste travel, hotel, restaurant, or product links"
-                spellcheck="false"
-                placeholder="Paste links here"
-              ></textarea>
-              <button class="text-button" type="button" data-focus-links>
-                Add link manually
-              </button>
+            <section class="paste-box" aria-label="Add options">
+              <div class="mode-toggle" role="tablist" aria-label="Input mode">
+                <button class="mode-btn is-active" type="button" data-mode="links" role="tab" aria-selected="true">Paste links</button>
+                <button class="mode-btn" type="button" data-mode="manual" role="tab" aria-selected="false">Add manually</button>
+              </div>
+
+              <div class="mode-panel" data-mode-panel="links">
+                <button class="paste-action" type="button" data-paste-clipboard>
+                  <span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M10.5 13.5 13.5 10.5" />
+                      <path d="M8.5 15.5a4 4 0 0 1 0-5.7l1.8-1.8a4 4 0 0 1 5.7 0" />
+                      <path d="M15.5 8.5a4 4 0 0 1 0 5.7l-1.8 1.8a4 4 0 0 1-5.7 0" />
+                    </svg>
+                  </span>
+                  Paste from clipboard
+                </button>
+                <textarea
+                  class="link-input is-hidden"
+                  data-link-input
+                  rows="3"
+                  aria-label="Paste travel, hotel, restaurant, or product links"
+                  spellcheck="false"
+                  placeholder="Paste links here"
+                ></textarea>
+                <button class="text-button" type="button" data-focus-links>
+                  Add link manually
+                </button>
+              </div>
+
+              <div class="mode-panel is-hidden" data-mode-panel="manual">
+                <div class="manual-card-form">
+                  <input type="text" class="manual-input" data-manual-title placeholder="Title (required)" maxlength="72" />
+                  <input type="text" class="manual-input" data-manual-desc placeholder="Description (optional)" maxlength="200" />
+                  <input type="text" class="manual-input" data-manual-image placeholder="Image URL (optional)" />
+                  <input type="text" class="manual-input" data-manual-link placeholder="Source link (optional)" />
+                  <button class="primary-action" type="button" data-add-manual-card>
+                    Add to list
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+                  </button>
+                </div>
+              </div>
             </section>
 
             <section class="found-panel" data-found-panel aria-label="Imported links">
@@ -74,9 +97,21 @@
             </section>
 
             <section class="voter-panel" aria-labelledby="voters-title">
-              <h3 id="voters-title">No setup</h3>
+              <h3 id="voters-title">Who's deciding?</h3>
               <div class="chip-row" data-voter-chips></div>
-              <button class="deadline" type="button" data-note="Aim set for today at 21:00">
+              <div class="participant-container" data-participant-container></div>
+              <button class="text-button" type="button" data-add-participant>+ Add participant</button>
+            </section>
+
+            <section class="deadline-panel" aria-label="Set deadline">
+              <h3>Deadline (optional)</h3>
+              <input
+                type="datetime-local"
+                class="deadline-input"
+                data-deadline-input
+                aria-label="Decision deadline"
+              />
+              <button class="deadline" type="button" data-note="Aim set for today at 21:00" style="display:none">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <circle cx="12" cy="12" r="8" />
                   <path d="M12 8v5l3 2" />
@@ -117,8 +152,9 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
                 Created. Share with your group
               </strong>
-              <p>Send this private link so everyone can vote:</p>
-              <code data-share-url></code>
+              <p>Send each person their private voting link:</p>
+              <p><code data-share-url class="is-hidden"></code></p>
+              <div data-magic-links></div>
               <div class="share-actions">
                 <button class="share-copy" type="button" data-share-copy>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>
@@ -134,8 +170,11 @@
                 <span>Vote as</span>
                 <input type="text" data-voter-name autocomplete="name" maxlength="40" value="You" disabled />
               </label>
-              <span data-vote-context>Private until you choose · aim for 21:00</span>
+              <span data-vote-context>Private until you choose</span>
+              <span data-countdown class="countdown is-hidden"></span>
+              <span data-voter-progress class="voter-progress is-hidden"></span>
               <div class="avatar-dots" data-avatar-dots aria-label="Participants"></div>
+              <div class="participation-dashboard is-hidden" data-participation-dashboard></div>
             </section>
 
             <section class="card-stack" aria-label="Current option">
@@ -172,6 +211,13 @@
                 <strong>Yes</strong>
                 <span>like</span>
               </button>
+              <button class="vote-button is-abstain" type="button" data-vote="abstain">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5v14" /><path d="M5 12h14" />
+                </svg>
+                <strong>Skip</strong>
+                <span>no pref.</span>
+              </button>
             </div>
             <div class="vote-feedback">
               <p data-vote-status aria-live="polite">Swipe the card or tap a choice.</p>
@@ -203,6 +249,7 @@
             </section>
 
             <section class="winner-card" data-winner-card aria-label="Winning option"></section>
+            <section class="tiebreaker-section is-hidden" data-tiebreaker aria-label="Resolve tied options"></section>
             <button class="backup-row" type="button" data-backup-row data-note="Two backup matches are available">
               Need backup options? 2 other matches
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
@@ -222,6 +269,39 @@
                 <path d="m5 13 4 4L19 7" />
               </svg>
               Copy the final pick to share with your group
+            </p>
+          </footer>
+        </article>
+
+        <article class="screen" data-screen="public" aria-labelledby="public-title">
+          <header class="topbar">
+            <div>
+              <h1 id="public-title" data-title>SwipeShortlist</h1>
+              <p data-public-status>Public result</p>
+            </div>
+          </header>
+
+          <div class="content content-result">
+            <section class="result-hero">
+              <p data-result-state>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
+                Public result
+              </p>
+              <h2 id="result-title" data-public-heading>Loading...</h2>
+              <span data-public-subheading></span>
+            </section>
+
+            <section class="winner-card" data-public-winner aria-label="Winning option"></section>
+            <section class="tiebreaker-section is-hidden" data-public-tiebreaker></section>
+            <button class="backup-row" type="button" data-public-backup data-note="">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+            </button>
+          </div>
+
+          <footer class="bottom-bar">
+            <p aria-live="polite" data-public-footer>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
+              Decided with SwipeShortlist
             </p>
           </footer>
         </article>

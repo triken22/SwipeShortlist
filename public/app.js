@@ -8,10 +8,18 @@ const state = {
   votedCardIds: new Set(),
   voterKey: "",
   voterName: "You",
+  magicVoter: null,          // Resolved voter from magic link
+  magicLinkToken: "",         // ?t= token from URL
+  isCreator: false,           // True if current voter is the shortlist creator
+  participants: [],           // Participant names for create form
+  deadline: "",               // ISO string for deadline picker
+  deadlineLabel: "Aim to decide by 21:00",
   isVoting: false,
   lastVote: null,
   showShareFlow: false,
   shareFlowCode: "",
+  shareMagicLinks: null,      // Map of name -> magic link URL from create response
+  participation: null,        // Participation data for the dashboard
   drag: null,
   routeScreen: "create"
 };
@@ -45,10 +53,26 @@ init().catch((error) => {
 });
 
 async function init() {
+  // Check for magic link token in URL
+  const urlParams = new URLSearchParams(location.search);
+  state.magicLinkToken = urlParams.get("t") || "";
+
   wireControls();
   const initialRoute = parseRoute();
+
+  // If we have a magic link token, redirect to clean hash URL
+  if (state.magicLinkToken && initialRoute.code) {
+    const cleanHash = `#/vote/${encodeURIComponent(initialRoute.code)}`;
+    if (location.hash !== cleanHash) {
+      history.replaceState(null, "", cleanHash);
+    }
+  }
+
   if (initialRoute.code) {
     await loadShortlist(initialRoute.code);
+    if (state.magicLinkToken) {
+      await resolveMagicLink(initialRoute.code);
+    }
   }
 
   renderAll();
@@ -103,6 +127,76 @@ function wireControls() {
     input?.focus();
   });
 
+  // Mode toggle for manual vs links
+  $$("[data-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      $$("[data-mode]").forEach((b) => {
+        b.classList.toggle("is-active", b.dataset.mode === mode);
+        b.setAttribute("aria-selected", b.dataset.mode === mode ? "true" : "false");
+      });
+      $$("[data-mode-panel]").forEach((panel) => {
+        panel.classList.toggle("is-hidden", panel.dataset.modePanel !== mode);
+      });
+    });
+  });
+
+  // Manual card form
+  $("[data-add-manual-card]")?.addEventListener("click", () => {
+    const title = ($("[data-manual-title]")?.value || "").trim();
+    if (!title) {
+      setStatus("Add a title for the option.");
+      return;
+    }
+    const desc = ($("[data-manual-desc]")?.value || "").trim();
+    const imageUrl = ($("[data-manual-image]")?.value || "").trim();
+    const sourceUrl = ($("[data-manual-link]")?.value || "").trim();
+
+    // Validate source URL if provided
+    let cleanUrl = sourceUrl;
+    if (cleanUrl) {
+      try {
+        const url = new URL(cleanUrl.startsWith("http") ? cleanUrl : `https://${cleanUrl}`);
+        cleanUrl = url.toString();
+      } catch {
+        cleanUrl = "";
+      }
+    }
+
+    const domain = sourceUrl ? (() => { try { return new URL(cleanUrl).hostname.replace(/^www\./, ""); } catch { return ""; } })() : "";
+
+    state.draftCards.push({
+      sourceUrl: cleanUrl || `manual-${Date.now()}`,
+      title,
+      priceLabel: desc ? desc.slice(0, 40) : "Manual entry",
+      location: domain || "Manual option",
+      facts: desc ? [desc.slice(0, 80)] : [],
+      isValid: true,
+      isDuplicate: false,
+      imagePath: imageUrl || null
+    });
+
+    // Clear form
+    $("[data-manual-title]").value = "";
+    $("[data-manual-desc]").value = "";
+    $("[data-manual-image]").value = "";
+    $("[data-manual-link]").value = "";
+    $("[data-manual-title]").focus();
+
+    refreshDraftDuplicateFlags();
+    renderReviewCards();
+    const count = state.draftCards.filter(isSubmittableDraftCard).length;
+    setStatus(`${count} option${count !== 1 ? "s" : ""} added. Review and create the voting link.`);
+  });
+
+  // Enter key on manual title field triggers add
+  $("[data-manual-title]")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      $("[data-add-manual-card]")?.click();
+    }
+  });
+
   $("[data-review-list]")?.addEventListener("input", (event) => {
     const target = event.target;
     const index = Number(target.dataset?.cardIndex);
@@ -145,12 +239,26 @@ function wireControls() {
         return;
       }
 
+      // Collect participant names from inputs
+      const participantInputs = $$("[data-participant-input]");
+      const participants = participantInputs
+        .map((input) => input.value.trim())
+        .filter(Boolean);
+
+      // Collect deadline
+      const deadlineInput = $("[data-deadline-input]");
+      const deadline = deadlineInput?.value || null;
+
       button.disabled = true;
       setStatus("Creating private voting link...");
       try {
+        const body = { cards };
+        if (participants.length > 0) body.participants = participants;
+        if (deadline) body.deadline = deadline;
+
         state.shortlist = await api("/api/shortlists", {
           method: "POST",
-          body: JSON.stringify({ cards })
+          body: JSON.stringify(body)
         });
         state.draftCards = [];
         state.results = null;
@@ -160,10 +268,17 @@ function wireControls() {
         state.voterName = loadVoterName(state.shortlist.code);
         state.showShareFlow = true;
         state.shareFlowCode = state.shortlist.code;
+        state.isCreator = true;
+
+        // Store magic links for the nudge system
+        if (state.shortlist.magicLinks) {
+          state.shareMagicLinks = state.shortlist.magicLinks;
+        }
+
         localStorage.setItem("swipe-shortlist-last-code", state.shortlist.code);
         saveLocalVotes();
         renderAll();
-        setStatus(`Created with ${cards.length} option${cards.length !== 1 ? "s" : ""}. Private link ready: ${shareUrl()}`);
+        setStatus(`Created with ${cards.length} option${cards.length !== 1 ? "s" : ""}. Private link ready.`);
         location.hash = routeHash("vote");
       } catch (error) {
         console.error(error);
@@ -260,7 +375,10 @@ function renderAll() {
   renderVoters();
   renderVoteContext();
   renderShareBanner();
+  renderParticipationDashboard();
   renderCurrentCard();
+  renderCountdown();
+  createRenderer();
 }
 
 function renderPreview() {
@@ -318,13 +436,27 @@ function renderVoteContext() {
 
   const total = state.shortlist.cards.length;
   const saved = state.votedCardIds.size;
+  const deadline = state.shortlist?.deadline;
+  const isFinalized = state.shortlist?.finalized;
+
+  // Countdown and progress info
+  let deadlineInfo = "";
+  if (isFinalized) {
+    deadlineInfo = " · Decision closed";
+  } else if (deadline) {
+    const diffMs = new Date(deadline) - new Date();
+    if (diffMs <= 0) deadlineInfo = " · Closing now";
+    else if (diffMs < 60000) deadlineInfo = " · Closes < 1 min";
+    else deadlineInfo = ` · Closes in ${Math.ceil(diffMs / 60000)}m`;
+  }
+
   if (saved >= total) {
     const completed = Math.max(Number(state.shortlist.completedVoterCount || 0), 1);
-    node.textContent = `Your deck is done · ${completed} ${completed === 1 ? "person" : "people"} finished`;
+    node.textContent = `Your deck is done · ${completed} ${completed === 1 ? "person" : "people"} finished${deadlineInfo}`;
   } else if (saved > 0) {
-    node.textContent = `${saved}/${total} choices saved · results unlock after the deck`;
+    node.textContent = `${saved}/${total} choices saved${deadlineInfo}`;
   } else {
-    node.textContent = "Private until your deck is done";
+    node.textContent = `Private until your deck is done${deadlineInfo}`;
   }
   if (progressNode) progressNode.textContent = `${Math.min(state.currentIndex + 1, total)} / ${total}`;
 }
@@ -355,12 +487,14 @@ function renderCurrentCard() {
     return;
   }
 
+  const hasSource = card.sourceUrl && !card.sourceUrl.startsWith("manual-");
+
   target.innerHTML = `
     ${cardMediaMarkup(card, "card-media")}
     <div class="card-body">
       <span class="domain">${escapeHtml(card.sourceDomain)}</span>
       <h2>${escapeHtml(card.title)}</h2>
-      <strong class="price">${escapeHtml(card.priceLabel)}</strong>
+      ${card.priceLabel ? `<strong class="price">${escapeHtml(card.priceLabel)}</strong>` : ""}
       <span class="location">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
         ${escapeHtml(card.location)}
@@ -372,10 +506,10 @@ function renderCurrentCard() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
         <span>${escapeHtml(card.trustLabel)}</span>
       </span>
-      <a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">
+      ${hasSource ? `<a class="source-link" href="${escapeAttr(card.sourceUrl)}" target="_blank" rel="noreferrer noopener">
         Open source link
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
-      </a>
+      </a>` : ""}
     </div>
   `;
 }
@@ -409,7 +543,8 @@ async function renderResults() {
 
   $("[data-result-state]").innerHTML = stateIcon;
   $("[data-result-topbar]").textContent = rationale?.tied ? "Split result" : "Voting complete";
-  $("[data-result-heading]").textContent = `${winner.title} ${rationale?.tied ? "is top (tied)" : "wins"}`;
+  const winText = rationale?.tied ? "is top (tied)" : (rationale?.tiebreakerResolved ? "wins (tiebreaker)" : "wins");
+  $("[data-result-heading]").textContent = `${winner.title} ${winText}`;
   $("[data-result-subheading]").textContent = rationale?.detail || "Everyone can live with this pick. Send it and stop the thread.";
   $("[data-send-final]").innerHTML = `Copy final pick <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="9" rx="2" /><path d="M8 10V8a4 4 0 0 1 8 0v2" /></svg>`;
   $("[data-send-status]").textContent = "Ready to copy for the group chat.";
@@ -428,14 +563,15 @@ async function renderResults() {
         <span class="score"><strong>${winner.yesCount}</strong><span>yes</span></span>
         <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
         <span class="score"><strong>${winner.noCount}</strong><span>no</span></span>
+        ${winner.abstainCount ? `<span class="score"><strong>${winner.abstainCount}</strong><span>abstain</span></span>` : ""}
       </div>
       <div class="rationale-box">
         <p>${escapeHtml(rationale?.detail || "")}</p>
       </div>
-      <a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
+      ${winner.sourceUrl && !winner.sourceUrl.startsWith("manual-") ? `<a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">
         Open final link
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg>
-      </a>
+      </a>` : ""}
     </div>
   `;
   $("[data-backup-row]")?.classList.toggle("is-hidden", !state.results?.backups?.length);
@@ -443,6 +579,65 @@ async function renderResults() {
     const backup = state.results.backups[0];
     $("[data-backup-row]").innerHTML = `Backup: ${escapeHtml(backup.title)} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
     $("[data-backup-row]").dataset.note = `Backup: ${backup.title} - ${backup.sourceUrl}`;
+  }
+
+  // Tiebreaker UI
+  const tiebreakerSection = $("[data-tiebreaker]");
+  if (tiebreakerSection) {
+    const ties = state.results?.ties;
+    if (ties && ties.length > 1 && !state.results?.tiebreaker) {
+      tiebreakerSection.classList.remove("is-hidden");
+      tiebreakerSection.innerHTML = `
+        <div class="tiebreaker-box">
+          <strong>Tied!</strong>
+          <p>${ties.length} options are tied at ${ties[0].score} points. Pick one to break the tie:</p>
+          <div class="tiebreaker-options">
+            ${ties.map((t) => `
+              <button class="tiebreaker-pick" type="button" data-tie-card-id="${t.card.id}">
+                <strong>${escapeHtml(t.card.title)}</strong>
+                <span>${t.card.yesCount} yes · ${t.card.noCount} no</span>
+              </button>
+            `).join("")}
+          </div>
+          <button class="text-button" type="button" data-tie-first>First added wins (auto)</button>
+        </div>
+      `;
+
+      // Wire up tiebreaker picks
+      $$("[data-tie-card-id]").forEach((btn) => {
+        btn.onclick = async () => {
+          const cardId = Number(btn.dataset.tieCardId);
+          await resolveTiebreaker(cardId);
+        };
+      });
+
+      const firstBtn = $("[data-tie-first]");
+      if (firstBtn) {
+        firstBtn.onclick = async () => {
+          await resolveTiebreaker(null, "first_wins");
+        };
+      }
+    } else {
+      tiebreakerSection.classList.add("is-hidden");
+    }
+  }
+}
+
+async function resolveTiebreaker(cardId, type = "creator_pick") {
+  if (!state.shortlist) return;
+  try {
+    const results = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/tie`, {
+      method: "POST",
+      body: JSON.stringify({ tiebreaker: type, winnerCardId: cardId })
+    });
+    if (results) {
+      state.results = results;
+      renderResults();
+      setStatus("Tie resolved!");
+    }
+  } catch (error) {
+    console.error(error);
+    setStatus("Could not resolve tie.");
   }
 }
 
@@ -602,10 +797,77 @@ function resetDrag() {
   target.dataset.swipeIntent = "";
 }
 
+async function loadPublicResults(code) {
+  try {
+    const data = await api(`/api/shortlists/${encodeURIComponent(code)}/results?public=1`);
+    if (!data) {
+      setStatus("Decision not found.");
+      return;
+    }
+    const winner = data.winner;
+    const rationale = data.rationale;
+
+    $("[data-public-heading]").textContent = winner ? `${winner.title} wins` : "No winner yet";
+    $("[data-public-subheading]").textContent = rationale?.detail || "The group decided.";
+    $("[data-public-status]").textContent = data.shortlist?.finalized ? "Final result" : "Decision in progress";
+
+    if (winner) {
+      const hasSource = winner.sourceUrl && !winner.sourceUrl.startsWith("manual-");
+      $("[data-public-winner]").innerHTML = `
+        <div class="winner-body">
+          <span class="domain">${escapeHtml(winner.sourceDomain)}</span>
+          <h3>${escapeHtml(winner.title)}</h3>
+          ${winner.priceLabel ? `<strong class="price">${escapeHtml(winner.priceLabel)}</strong>` : ""}
+          <div class="score-row">
+            <span class="score"><strong>${winner.yesCount}</strong><span>yes</span></span>
+            <span class="score"><strong>${winner.holdCount}</strong><span>hold</span></span>
+            <span class="score"><strong>${winner.noCount}</strong><span>no</span></span>
+            ${winner.abstainCount ? `<span class="score"><strong>${winner.abstainCount}</strong><span>abstain</span></span>` : ""}
+          </div>
+          ${hasSource ? `<a class="source-link" href="${escapeAttr(winner.sourceUrl)}" target="_blank" rel="noreferrer noopener">Open link <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7" /><path d="M8 7h9v9" /></svg></a>` : ""}
+        </div>
+      `;
+    } else {
+      $("[data-public-winner]").innerHTML = `<div class="winner-body"><h3>No results yet</h3><span class="trust">The group hasn't finished deciding.</span></div>`;
+    }
+
+    // Backup
+    const backupData = data.backups?.[0];
+    const backupRow = $("[data-public-backup]");
+    if (backupData) {
+      backupRow.classList.remove("is-hidden");
+      backupRow.innerHTML = `Backup: ${escapeHtml(backupData.title)} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
+    } else {
+      backupRow.classList.add("is-hidden");
+    }
+  } catch {
+    $("[data-public-heading]").textContent = "Could not load results";
+  }
+}
+
 async function handleRoute() {
   const route = parseRoute();
+
+  // Re-check magic link token on route changes
+  const urlParams = new URLSearchParams(location.search);
+  const token = urlParams.get("t") || "";
+  if (token && token !== state.magicLinkToken) {
+    state.magicLinkToken = token;
+  }
+
+  if (route.screen === "public" && route.code) {
+    state.routeScreen = "public";
+    showScreen("public");
+    await loadPublicResults(route.code);
+    return;
+  }
+
   if (route.code && (!state.shortlist || state.shortlist.code !== route.code)) {
     await loadShortlist(route.code);
+    if (state.magicLinkToken) {
+      await resolveMagicLink(route.code);
+      renderAll();
+    }
   }
   if (!route.code && route.screen !== "create") {
     setStatus("Create or open a private voting link first.");
@@ -614,8 +876,8 @@ async function handleRoute() {
 }
 
 function showScreen(name) {
-  const allowed = new Set(["create", "vote", "result"]);
-  const next = allowed.has(name) && (name === "create" || state.shortlist) ? name : "create";
+  const allowed = new Set(["create", "vote", "result", "public"]);
+  const next = allowed.has(name) && (name === "create" || name === "public" || state.shortlist) ? name : "create";
   state.routeScreen = next;
   $$("[data-screen]").forEach((screen) => {
     screen.classList.toggle("is-active", screen.dataset.screen === next);
@@ -656,6 +918,7 @@ function voteLabel(vote) {
   if (vote === "no") return "No";
   if (vote === "hold") return "Hold";
   if (vote === "strong_yes") return "Strong yes";
+  if (vote === "abstain") return "No preference";
   return "Yes";
 }
 
@@ -1012,6 +1275,7 @@ function draftCardsFromState() {
       facts: Array.isArray(c.facts) ? c.facts.map((f) => String(f || "").trim()).filter(Boolean) : []
     };
     if (c.imagePath) output.imagePath = c.imagePath;
+    if (c.description) output.description = c.description;
     return output;
   });
 }
@@ -1045,8 +1309,9 @@ function renderReviewCards() {
   }
 
   list.innerHTML = cards.map((card, index) => {
-    const sourceHref = card.isValid ? escapeAttr(card.sourceUrl) : "#";
-    const sourceLabel = card.isValid ? "Open source" : "Fix pasted link";
+    const hasSourceUrl = card.isValid && card.sourceUrl && !card.sourceUrl.startsWith("manual-");
+    const sourceHref = hasSourceUrl ? escapeAttr(card.sourceUrl) : "#";
+    const sourceLabel = hasSourceUrl ? "Open source" : "Manual option";
     const cardImageSrc = displayImagePath(card.imagePath);
     const imageHtml = cardImageSrc !== DEFAULT_CARD_IMAGE
       ? `<img class="review-card-image" src="${escapeAttr(cardImageSrc)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.classList.add('is-fallback');this.src='/assets/link-card.svg';" />`
@@ -1098,18 +1363,35 @@ function domainFromUrl(urlStr) {
 }
 
 function renderLockedResults() {
-  $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Private result`;
-  $("[data-result-topbar]").textContent = "Private result";
-  $("[data-result-heading]").textContent = "Finish the deck to see the winner";
-  $("[data-result-subheading]").textContent = "Peer votes stay hidden until you have made a choice on every card.";
+  const isFinalized = state.shortlist?.finalized;
+
+  if (isFinalized) {
+    // Finalized but voter hasn't completed yet — show waiting message
+    $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Decision closed`;
+    $("[data-result-topbar]").textContent = "Decision closed";
+    $("[data-result-heading]").textContent = "The group decided while you were away";
+    $("[data-result-subheading]").textContent = "Vote on the remaining cards to see the result.";
+    $("[data-winner-card]").innerHTML = `
+      <div class="winner-body">
+        <span class="domain">closed result</span>
+        <h3>Finish your deck</h3>
+        <span class="trust">The deadline has passed and the group decision is locked. Vote on remaining cards to reveal it.</span>
+      </div>
+    `;
+  } else {
+    $("[data-result-state]").innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h.01" /><path d="M12 4v12" /></svg> Private result`;
+    $("[data-result-topbar]").textContent = "Private result";
+    $("[data-result-heading]").textContent = "Finish the deck to see the winner";
+    $("[data-result-subheading]").textContent = "Peer votes stay hidden until you have made a choice on every card.";
+    $("[data-winner-card]").innerHTML = `
+      <div class="winner-body">
+        <span class="domain">private result</span>
+        <h3>Your vote is still hidden</h3>
+        <span class="trust">Choose No, Hold, or Yes on every card before group results are revealed.</span>
+      </div>
+    `;
+  }
   $("[data-send-final]").innerHTML = `Back to vote <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>`;
-  $("[data-winner-card]").innerHTML = `
-    <div class="winner-body">
-      <span class="domain">private result</span>
-      <h3>Your vote is still hidden</h3>
-      <span class="trust">Choose No, Hold, or Yes on every card before group results are revealed.</span>
-    </div>
-  `;
   $("[data-backup-row]")?.classList.add("is-hidden");
   $("[data-send-status]").textContent = "Results open after your deck is complete";
 }
@@ -1127,6 +1409,42 @@ function renderShareBanner() {
     banner.classList.remove("is-hidden");
     if (privateRow) privateRow.classList.add("is-hidden");
     $("[data-share-url]").textContent = shareUrl();
+
+    // Render per-person magic links
+    const linksContainer = $("[data-magic-links]");
+    if (linksContainer && state.shareMagicLinks) {
+      const names = Object.keys(state.shareMagicLinks);
+      if (names.length > 0) {
+        linksContainer.innerHTML = names
+          .map(
+            (name) => `
+              <div class="magic-link-row">
+                <span class="chip">${escapeHtml(name)}</span>
+                <button class="text-button" type="button" data-copy-magic="${escapeAttr(name)}" data-magic-url="${escapeAttr(state.shareMagicLinks[name])}">
+                  Copy link
+                </button>
+              </div>
+            `
+          )
+          .join("");
+
+        // Wire up copy buttons for magic links
+        $$("[data-copy-magic]").forEach((btn) => {
+          btn.onclick = async () => {
+            const url = btn.dataset.magicUrl;
+            try {
+              await navigator.clipboard?.writeText(url);
+              btn.textContent = "Copied!";
+              setTimeout(() => { btn.textContent = "Copy link"; }, 2000);
+            } catch {
+              setStatus(url);
+            }
+          };
+        });
+      } else {
+        linksContainer.innerHTML = "";
+      }
+    }
   } else {
     banner.classList.add("is-hidden");
     if (privateRow) privateRow.classList.remove("is-hidden");
@@ -1135,6 +1453,21 @@ function renderShareBanner() {
 
 function hasVotedLocally() {
   return Boolean(state.shortlist?.cards?.length && state.votedCardIds.size >= state.shortlist.cards.length);
+}
+
+async function resolveMagicLink(code) {
+  if (!state.magicLinkToken || !code) return;
+  try {
+    const voter = await api(`/api/shortlists/${encodeURIComponent(code)}/resolve?t=${encodeURIComponent(state.magicLinkToken)}`);
+    if (voter) {
+      state.magicVoter = voter;
+      state.voterName = voter.name;
+      state.isCreator = voter.isOwner;
+      localStorage.setItem(voterNameStorageKey(code), voter.name);
+    }
+  } catch {
+    // Magic link resolution failed — continue with existing identity
+  }
 }
 
 async function loadShortlist(code) {
@@ -1146,6 +1479,7 @@ async function loadShortlist(code) {
     state.votedCardIds.clear();
     state.showShareFlow = false;
     state.shareFlowCode = "";
+    state.participation = null;
     setStatus("That private voting link was not found.");
     renderAll();
     return false;
@@ -1159,10 +1493,32 @@ async function loadShortlist(code) {
   state.results = null;
   state.voterKey = getOrCreateVoterKey(existing.code);
   state.voterName = loadVoterName(existing.code);
+
+  // If we have a magic voter, override stored voter name
+  if (state.magicVoter) {
+    state.voterName = state.magicVoter.name;
+  }
+
   loadLocalVotes();
   syncCurrentIndex();
+
+  // Load participation data (creator dashboard + voter progress)
+  await loadParticipation();
+
   renderAll();
   return true;
+}
+
+async function loadParticipation() {
+  if (!state.shortlist) return;
+  try {
+    const data = await api(`/api/shortlists/${encodeURIComponent(state.shortlist.code)}/participation`);
+    if (data?.participants) {
+      state.participation = data;
+    }
+  } catch {
+    // Participation is optional — don't block the UI
+  }
 }
 
 function applyResultsShortlist(results) {
@@ -1180,6 +1536,178 @@ function syncCurrentIndex() {
   const nextIndex = cards.findIndex((card) => !state.votedCardIds.has(card.id));
   state.currentIndex = nextIndex === -1 ? cards.length : nextIndex;
 }
+
+function createRenderer() {
+  // Only render create screen enhancements if we're on the create screen
+  if (state.routeScreen !== "create" || state.shortlist) return;
+
+  // Render participant name inputs
+  const container = $("[data-participant-container]");
+  if (container) {
+    const names = state.participants.length > 0 ? state.participants : ["You", "", ""];
+    container.innerHTML = names
+      .map(
+        (name, i) => `
+          <input
+            type="text"
+            data-participant-input
+            class="participant-input"
+            value="${escapeAttr(name)}"
+            placeholder="Participant ${i + 1}"
+            maxlength="40"
+            autocomplete="off"
+          />
+        `
+      )
+      .join("");
+  }
+
+  // Wire up participant add button
+  const addBtn = $("[data-add-participant]");
+  if (addBtn) {
+    addBtn.onclick = () => {
+      const inputs = $$("[data-participant-input]");
+      state.participants = inputs.map((inp) => inp.value).filter(Boolean);
+      state.participants.push("");
+      createRenderer();
+    };
+  }
+
+  // Wire up participant inputs to keep state in sync
+  container?.addEventListener("input", () => {
+    const inputs = $$("[data-participant-input]");
+    state.participants = inputs.map((inp) => inp.value);
+  });
+
+  // Set deadline min to now for the datetime picker
+  const deadlineInput = $("[data-deadline-input]");
+  if (deadlineInput) {
+    if (!deadlineInput.value) {
+      // Default to tomorrow at 9pm
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(21, 0, 0, 0);
+      deadlineInput.value = tomorrow.toISOString().slice(0, 16);
+    }
+  }
+}
+
+function renderParticipationDashboard() {
+  const dashboard = $("[data-participation-dashboard]");
+  const voterProgress = $("[data-voter-progress]");
+  if (!dashboard && !voterProgress) return;
+
+  const participants = state.participation?.participants || [];
+  if (!participants.length) {
+    if (dashboard) dashboard.classList.add("is-hidden");
+    if (voterProgress) voterProgress.classList.add("is-hidden");
+    return;
+  }
+
+  const totalCards = state.shortlist?.cards?.length || 0;
+  const completedCount = participants.filter((p) => p.isCompleted).length;
+  const votedCount = participants.filter((p) => p.completedCardCount > 0).length;
+
+  // Creator dashboard — full participation grid
+  if (dashboard) {
+    if (state.isCreator) {
+      dashboard.classList.remove("is-hidden");
+      const dotsHtml = participants
+        .map((p) => {
+          const dotClass = p.isCompleted ? "is-green" : p.completedCardCount > 0 ? "is-yellow" : "";
+          const nudgeAttr = state.shareMagicLinks?.[p.name]
+            ? `data-nudge="${escapeAttr(state.shareMagicLinks[p.name])}"`
+            : "";
+          return `
+            <div class="participant-row">
+              <span class="avatar">${escapeHtml(p.initials)}</span>
+              <span class="participant-name">${escapeHtml(p.name)}</span>
+              <span class="participation-dot ${dotClass}"></span>
+              <span class="participation-count">${p.completedCardCount}/${totalCards}</span>
+              ${!p.isCompleted ? `<button class="nudge-button" type="button" ${nudgeAttr} data-nudge-name="${escapeAttr(p.name)}" title="Copy nudge message">Nudge</button>` : ""}
+            </div>
+          `;
+        })
+        .join("");
+      dashboard.innerHTML = dotsHtml;
+
+      // Wire up nudge buttons
+      $$("[data-nudge-name]").forEach((btn) => {
+        btn.onclick = () => nudgeParticipant(btn.dataset.nudgeName);
+      });
+    } else {
+      dashboard.classList.add("is-hidden");
+    }
+  }
+
+  // Voter progress — simple "N of M voted" line
+  if (voterProgress) {
+    voterProgress.classList.remove("is-hidden");
+    const progressText = `${votedCount} of ${participants.length} have voted`;
+    const completedText = completedCount > 0
+      ? ` · ${completedCount} ${completedCount === 1 ? "person" : "people"} finished`
+      : "";
+    voterProgress.textContent = progressText + completedText;
+  }
+}
+
+function nudgeParticipant(name) {
+  const link = state.shareMagicLinks?.[name];
+  if (!link) {
+    setStatus(`No magic link for ${name}. They may have joined anonymously.`);
+    return;
+  }
+  const title = state.shortlist?.title || "this decision";
+  const message = `Hey ${name}, we are deciding ${title} on SwipeShortlist. Cast your vote here: ${link}`;
+  navigator.clipboard?.writeText(message).then(
+    () => setStatus(`Nudge copied for ${name}. Paste it in your group chat.`),
+    () => setStatus(message)
+  );
+}
+
+function renderCountdown() {
+  const node = $("[data-countdown]");
+  if (!node) return;
+
+  const deadline = state.shortlist?.deadline;
+  if (!deadline) {
+    node.classList.add("is-hidden");
+    return;
+  }
+
+  const deadlineDate = new Date(deadline);
+  const now = new Date();
+  const diffMs = deadlineDate - now;
+  const isFinalized = state.shortlist?.finalized;
+
+  if (isFinalized) {
+    node.textContent = "Results ready";
+    node.classList.remove("is-hidden");
+    return;
+  }
+
+  if (diffMs <= 0) {
+    node.textContent = "Closes < 1 min";
+    node.classList.remove("is-hidden");
+    return;
+  }
+
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const remainingMins = diffMins % 60;
+
+  if (diffHours > 0) {
+    node.textContent = `Closes in ${diffHours}h ${remainingMins}m`;
+  } else {
+    node.textContent = `Closes in ${diffMins}m`;
+  }
+  node.classList.remove("is-hidden");
+}
+
+// Update countdown every 30 seconds
+setInterval(() => {
+  if (state.shortlist?.deadline) renderCountdown();
+}, 30000);
 
 function renderIdentity() {
   const input = $("[data-voter-name]");
@@ -1254,12 +1782,24 @@ function parseRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   const screen = parts[0] || "create";
   const code = parts[1] || new URLSearchParams(location.search).get("code") || "";
+  // Handle "public" screen as a read-only results view
+  if (screen === "public") {
+    return { screen: "public", code };
+  }
   return { screen, code };
 }
 
-function routeHash(screen) {
+function routeHash(screen, { includeToken = false } = {}) {
   const code = state.shortlist?.code;
-  return code ? `#/${screen}/${encodeURIComponent(code)}` : `#/${screen}`;
+  if (!code) return `#/${screen}`;
+  let hash = `#/${screen}/${encodeURIComponent(code)}`;
+
+  // Include magic link token if available
+  if (includeToken && state.magicLinkToken) {
+    hash += `?t=${encodeURIComponent(state.magicLinkToken)}`;
+  }
+
+  return hash;
 }
 
 function escapeHtml(value) {

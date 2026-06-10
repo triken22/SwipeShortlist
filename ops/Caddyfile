@@ -1,0 +1,31 @@
+# SwipeShortlist — Caddy reverse proxy configuration
+# Replace DOMAIN with your actual domain (e.g., swipeshortlist.com)
+
+DOMAIN {
+    # Terminate TLS with auto Let's Encrypt certificates
+    tls {
+        issuer acme {
+            # Use staging first for testing: set ACME_DIRECTORY to Let's Encrypt staging
+        }
+    }
+
+    # Proxy all requests to the Node.js backend
+    reverse_proxy 127.0.0.1:8092
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "same-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    # Compress responses
+    encode gzip
+
+    # Log access (optional)
+    log {
+        output file /var/log/caddy/swipe-shortlist-access.log
+    }
+}
