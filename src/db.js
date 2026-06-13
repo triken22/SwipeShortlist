@@ -18,17 +18,41 @@ const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thum
 const DEFAULT_TITLE = "Private shortlist";
 const DEFAULT_DEADLINE_LABEL = "Aim to decide today";
 const MAX_LINKS = 50;
+const AIRBNB_DOMAINS = ["airbnb.com", "airbnb.co.uk", "airbnb.de", "airbnb.fr", "airbnb.es", "airbnb.it", "airbnb.ca", "airbnb.com.au"];
+const BOOKING_DOMAINS = ["booking.com"];
+const TRUSTED_IMAGE_SOURCES = [
+  { sourceDomains: AIRBNB_DOMAINS, imageDomains: ["muscache.com", "airbnb.com"] },
+  { sourceDomains: BOOKING_DOMAINS, imageDomains: ["bstatic.com", "booking.com"] },
+];
 
-function cleanImageUrl(raw) {
+function cleanImageUrl(raw, sourceUrl = "") {
   if (!raw || typeof raw !== "string") return null;
   try {
     const url = new URL(raw.trim());
-    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (url.protocol !== "https:") return null;
     if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(url.pathname)) return null;
-    return url.toString();
+    if (isTrustedImageForSource(url.hostname, sourceUrl)) return url.toString();
+    return null;
   } catch {
     return null;
   }
+}
+
+function hostMatchesDomain(hostname, domains) {
+  const normalized = String(hostname || "").replace(/^www\./i, "").toLowerCase();
+  return domains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
+}
+
+function isTrustedImageForSource(imageHostname, sourceUrl) {
+  let sourceHostname;
+  try {
+    sourceHostname = new URL(sourceUrl).hostname;
+  } catch {
+    return false;
+  }
+  return TRUSTED_IMAGE_SOURCES.some(
+    (entry) => hostMatchesDomain(sourceHostname, entry.sourceDomains) && hostMatchesDomain(imageHostname, entry.imageDomains)
+  );
 }
 const GENERIC_URL_PATH_PARTS = new Set([
   "accommodation",
@@ -49,8 +73,8 @@ const GENERIC_URL_PATH_PARTS = new Set([
 
 // Known travel/product domain patterns for better fallback titles.
 const KNOWN_DOMAIN_FALLBACKS = [
-  { pattern: /(^|\.)airbnb\.[a-z.]{2,}$/, title: "Airbnb stay" },
-  { pattern: /(^|\.)booking\.[a-z.]{2,}$/, title: "Booking.com accommodation" },
+  { domains: AIRBNB_DOMAINS, title: "Airbnb stay" },
+  { domains: BOOKING_DOMAINS, title: "Booking.com accommodation" },
   { pattern: /(^|\.)vrbo\.[a-z.]{2,}$/, title: "Vrbo rental" },
   { pattern: /(^|\.)expedia\.[a-z.]{2,}$/, title: "Expedia listing" },
   { pattern: /(^|\.)hotels\.[a-z.]{2,}$/, title: "Hotels.com accommodation" },
@@ -627,14 +651,14 @@ function cardsFromDraftCards(draftCards) {
         sourceDomain: sourceDomain || "Manual entry",
         sourceUrl: sourceUrl || "",
         description: String(card.description || "").trim().slice(0, 200) || null,
-        imageUrl: (card.imagePath && cleanImageUrl(card.imagePath)) || null,
+        imageUrl: (card.imagePath && cleanImageUrl(card.imagePath, sourceUrl)) || null,
         location: (card.location || linkContext?.location || sourceDomain || "Manual option").slice(0, 80),
         priceLabel: (card.priceLabel || (sourceDomain ? "Price to verify" : "")).slice(0, 40),
         facts: hasFacts ? facts.slice(0, 6) : fallbackFacts,
         trustLabel: hasFacts
           ? "Context from your pasted text · verify details before deciding"
           : (linkContext?.trustLabel || (sourceDomain ? "Imported from pasted link · verify details before deciding" : "Manual entry · no source link")),
-        imagePath: (card.imagePath && cleanImageUrl(card.imagePath)) || DEFAULT_CARD_IMAGE
+        imagePath: (card.imagePath && cleanImageUrl(card.imagePath, sourceUrl)) || DEFAULT_CARD_IMAGE
       };
     })
     .filter(Boolean);
@@ -659,7 +683,8 @@ function titleFromUrl(url) {
   // otherwise "Link from <domain>".
   const domain = url.hostname.replace(/^www\./, "");
   for (const fb of KNOWN_DOMAIN_FALLBACKS) {
-    if (fb.pattern.test(domain)) {
+    const matches = fb.domains ? hostMatchesDomain(domain, fb.domains) : fb.pattern.test(domain);
+    if (matches) {
       return fb.title;
     }
   }
@@ -742,10 +767,6 @@ function ensureVoter(shortlistId, voter) {
   const voterKey = cleanVoterKey(voter.voterKey || "");
   const existing = findVoter(shortlistId, voter);
   if (existing) {
-    if (voterKey && String(existing.voter_key || "").startsWith("legacy-")) {
-      db.prepare("UPDATE voters SET voter_key = ? WHERE id = ?").run(voterKey, existing.id);
-      return db.prepare("SELECT * FROM voters WHERE id = ?").get(existing.id);
-    }
     return existing;
   }
 
@@ -774,18 +795,6 @@ function findVoter(shortlistId, voter) {
         )
         .get(shortlistId, cleanVoterName(rawName));
       if (byNameWithToken) return byNameWithToken;
-
-      // Legacy fallback for old voters
-      const legacyByName = db
-        .prepare(
-          `SELECT *
-           FROM voters
-           WHERE shortlist_id = ?
-             AND lower(name) = lower(?)
-             AND voter_key LIKE 'legacy-%'`
-        )
-        .get(shortlistId, cleanVoterName(rawName));
-      if (legacyByName) return legacyByName;
     }
     return null;
   }

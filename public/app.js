@@ -27,6 +27,12 @@ const state = {
 const DEFAULT_TITLE = "Private shortlist";
 const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
 const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"]);
+const AIRBNB_DOMAINS = ["airbnb.com", "airbnb.co.uk", "airbnb.de", "airbnb.fr", "airbnb.es", "airbnb.it", "airbnb.ca", "airbnb.com.au"];
+const BOOKING_DOMAINS = ["booking.com"];
+const TRUSTED_IMAGE_SOURCES = [
+  { sourceDomains: AIRBNB_DOMAINS, imageDomains: ["muscache.com", "airbnb.com"] },
+  { sourceDomains: BOOKING_DOMAINS, imageDomains: ["bstatic.com", "booking.com"] },
+];
 const GENERIC_URL_PATH_PARTS = new Set([
   "accommodation",
   "accommodations",
@@ -1152,7 +1158,7 @@ async function enrichDraftCards() {
       }
 
       if ((!card.imagePath || card.imagePath === DEFAULT_CARD_IMAGE || RETIRED_IMAGE_PATHS.has(card.imagePath)) && meta.ogImage) {
-        const imageUrl = cleanImageUrl(meta.ogImage);
+        const imageUrl = cleanImageUrl(meta.ogImage, meta.url);
         if (imageUrl) {
           card.imagePath = imageUrl;
           changed = true;
@@ -1209,7 +1215,7 @@ function factsFromMetadataCard({ sourceDomain, metadataTitle, metadataDescriptio
 }
 
 function isAirbnbDomain(domain) {
-  return /(^|\.)airbnb\./i.test(String(domain || ""));
+  return hostMatchesDomain(domain, AIRBNB_DOMAINS);
 }
 
 function isUsefulMetadataFact(fact) {
@@ -1429,7 +1435,7 @@ function renderReviewCards() {
     const hasSourceUrl = card.isValid && card.sourceUrl && !card.sourceUrl.startsWith("manual-");
     const sourceHref = hasSourceUrl ? escapeAttr(card.sourceUrl) : "#";
     const sourceLabel = hasSourceUrl ? "Open source" : "Manual option";
-    const cardImageSrc = displayImagePath(card.imagePath);
+    const cardImageSrc = displayImagePath(card.imagePath, card.sourceUrl);
     const imageHtml = cardImageSrc !== DEFAULT_CARD_IMAGE
       ? `<img class="review-card-image" src="${escapeAttr(cardImageSrc)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.classList.add('is-fallback');this.src='/assets/link-card.svg';" />`
       : "";
@@ -1850,7 +1856,7 @@ function saveLocalVotes() {
 }
 
 function cardMediaMarkup(card, className) {
-  const imagePath = displayImagePath(card?.imagePath);
+  const imagePath = displayImagePath(card?.imagePath, card?.sourceUrl);
   const isDefault = !card?.imagePath || imagePath === DEFAULT_CARD_IMAGE;
   const isManual = isDefault && (!card?.sourceUrl || card.sourceUrl.startsWith("manual-"));
 
@@ -1906,22 +1912,40 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function cleanImageUrl(raw) {
+function cleanImageUrl(raw, sourceUrl = "") {
   try {
     const url = new URL(String(raw || "").trim());
-    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (url.protocol !== "https:") return null;
     // Reject obviously tiny/placeholder images
     if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(url.pathname)) return null;
-    return url.toString();
+    if (isTrustedImageForSource(url.hostname, sourceUrl)) return url.toString();
+    return null;
   } catch {
     return null;
   }
 }
 
-function displayImagePath(raw) {
+function displayImagePath(raw, sourceUrl = "") {
   if (!raw || RETIRED_IMAGE_PATHS.has(raw)) return DEFAULT_CARD_IMAGE;
   if (raw === DEFAULT_CARD_IMAGE) return DEFAULT_CARD_IMAGE;
-  return cleanImageUrl(raw) || DEFAULT_CARD_IMAGE;
+  return cleanImageUrl(raw, sourceUrl) || DEFAULT_CARD_IMAGE;
+}
+
+function hostMatchesDomain(hostname, domains) {
+  const normalized = String(hostname || "").replace(/^www\./i, "").toLowerCase();
+  return domains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
+}
+
+function isTrustedImageForSource(imageHostname, sourceUrl) {
+  let sourceHostname;
+  try {
+    sourceHostname = new URL(sourceUrl).hostname;
+  } catch {
+    return false;
+  }
+  return TRUSTED_IMAGE_SOURCES.some(
+    (entry) => hostMatchesDomain(sourceHostname, entry.sourceDomains) && hostMatchesDomain(imageHostname, entry.imageDomains)
+  );
 }
 
 function escapeAttr(value) {

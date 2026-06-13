@@ -119,6 +119,26 @@ test("bare travel container links fall back to source domain titles", async () =
   }
 });
 
+test("spoofed provider hosts do not get Airbnb fallback titles", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-spoofed-provider-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=spoofed-provider-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      links: ["https://airbnb.evil.com/rooms/12345678"]
+    });
+
+    assert.equal(shortlist.cards[0].title, "Link from airbnb.evil.com");
+    assert.equal(shortlist.cards[0].location, "airbnb.evil.com");
+    assert.match(shortlist.cards[0].trustLabel, /verify details before deciding/);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("migration preserves existing demo-looking shortlists", async () => {
   const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-demo-preserve-"));
   process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
@@ -197,12 +217,12 @@ test("creates shortlist from structured draft cards with user-edited context", a
   try {
     dbModule.migrate();
     const cards = [
-      { sourceUrl: "https://example.org/bali-resort", title: "Bali Beach Resort", priceLabel: "$150/night", location: "Bali, Indonesia", facts: ["Beachfront", "Pool", "Breakfast included"], imagePath: "https://example.org/bali.jpg" },
+      { sourceUrl: "https://www.airbnb.co.uk/rooms/1426755644990955296", title: "Bali Beach Resort", priceLabel: "$150/night", location: "Bali, Indonesia", facts: ["Beachfront", "Pool", "Breakfast included"], imagePath: "https://a0.muscache.com/im/pictures/bali.jpg" },
       { sourceUrl: "https://example.net/ubud-inn", title: "Ubud Garden Inn", priceLabel: "$85/night", location: "Ubud, Bali", facts: ["Rice terrace view"] }
     ];
     const shortlist = dbModule.createShortlist({ title: "Bali Trip", cards });
     assert.equal(shortlist.cards.length, 2);
-    assert.equal(shortlist.cards[0].imagePath, "https://example.org/bali.jpg", "draft card with imagePath persists through createShortlist");
+    assert.equal(shortlist.cards[0].imagePath, "https://a0.muscache.com/im/pictures/bali.jpg", "trusted provider imagePath persists through createShortlist");
     assert.equal(shortlist.cards[1].imagePath, "/assets/link-card.svg", "draft card without imagePath falls back to DEFAULT_CARD_IMAGE");
     assert.equal(shortlist.cards[0].title, "Bali Beach Resort");
     assert.equal(shortlist.cards[0].priceLabel, "$150/night");
@@ -214,6 +234,45 @@ test("creates shortlist from structured draft cards with user-edited context", a
     assert.equal(shortlist.cards[1].location, "Ubud, Bali");
     assert.deepEqual(shortlist.cards[1].facts, ["Rice terrace view"]);
     assert.match(shortlist.code, /^FAMILY-\d{6}$/);
+  } finally {
+    dbModule.db.close();
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("structured draft cards only persist trusted provider images", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-image-trust-"));
+  process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
+  const dbModule = await import(`../src/db.js?case=image-trust-${Date.now()}`);
+
+  try {
+    dbModule.migrate();
+    const shortlist = dbModule.createShortlist({
+      cards: [
+        {
+          sourceUrl: "https://www.airbnb.co.uk/rooms/1426755644990955296",
+          imagePath: "https://a0.muscache.com/im/pictures/example.jpeg"
+        },
+        {
+          sourceUrl: "https://example.org/same-host",
+          imagePath: "https://example.org/same-host.jpg"
+        },
+        {
+          sourceUrl: "https://www.airbnb.co.uk/rooms/1426755644990955296",
+          imagePath: "https://tracker.example.net/pixel.jpg"
+        },
+        {
+          sourceUrl: "manual-1",
+          title: "Manual option",
+          imagePath: "https://a0.muscache.com/im/pictures/manual.jpeg"
+        }
+      ]
+    });
+
+    assert.equal(shortlist.cards[0].imagePath, "https://a0.muscache.com/im/pictures/example.jpeg");
+    assert.equal(shortlist.cards[1].imagePath, "/assets/link-card.svg");
+    assert.equal(shortlist.cards[2].imagePath, "/assets/link-card.svg");
+    assert.equal(shortlist.cards[3].imagePath, "/assets/link-card.svg");
   } finally {
     dbModule.db.close();
     rmSync(temp, { recursive: true, force: true });
@@ -239,7 +298,7 @@ test("structured draft cards trim blank titles before fallback", async () => {
   }
 });
 
-test("legacy voters can be found and adopted by a new browser key", async () => {
+test("fresh browser keys do not claim legacy voters by display name", async () => {
   const temp = mkdtempSync(join(tmpdir(), "swipe-shortlist-legacy-adopt-"));
   process.env.SWIPE_DB_PATH = join(temp, "test.sqlite");
   const dbModule = await import(`../src/db.js?case=legacy-adopt-${Date.now()}`);
@@ -262,7 +321,7 @@ test("legacy voters can be found and adopted by a new browser key", async () => 
     const voter = dbModule.db.prepare("SELECT id FROM voters WHERE shortlist_id = ? AND name = ?").get(shortlist.id, "You");
     dbModule.db.prepare("UPDATE voters SET voter_key = ? WHERE id = ?").run(`legacy-${voter.id}`, voter.id);
 
-    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterKey: "fresh-browser-key", voterName: "You" }), true);
+    assert.equal(dbModule.hasVoterCompleted(shortlist.code, { voterKey: "fresh-browser-key", voterName: "You" }), false);
     dbModule.recordVote({
       code: shortlist.code,
       cardId: shortlist.cards[0].id,
@@ -271,8 +330,10 @@ test("legacy voters can be found and adopted by a new browser key", async () => 
       vote: "hold"
     });
 
-    const adopted = dbModule.db.prepare("SELECT voter_key FROM voters WHERE id = ?").get(voter.id);
-    assert.equal(adopted.voter_key, "fresh-browser-key");
+    const legacy = dbModule.db.prepare("SELECT voter_key FROM voters WHERE id = ?").get(voter.id);
+    assert.equal(legacy.voter_key, `legacy-${voter.id}`);
+    const voters = dbModule.db.prepare("SELECT name FROM voters WHERE shortlist_id = ? ORDER BY id").all(shortlist.id).map((row) => row.name);
+    assert.deepEqual(voters, ["You", "You 2"]);
   } finally {
     dbModule.db.close();
     rmSync(temp, { recursive: true, force: true });
