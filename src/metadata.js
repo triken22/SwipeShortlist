@@ -6,6 +6,12 @@ import { isIP } from "node:net";
 const FETCH_TIMEOUT_MS = 4000;
 const MAX_HEAD_BYTES = 256 * 1024;
 const MAX_REDIRECTS = 3;
+const AIRBNB_DOMAINS = ["airbnb.com", "airbnb.co.uk", "airbnb.de", "airbnb.fr", "airbnb.es", "airbnb.it", "airbnb.ca", "airbnb.com.au"];
+const BOOKING_DOMAINS = ["booking.com"];
+const TRUSTED_IMAGE_SOURCES = [
+  { sourceDomains: AIRBNB_DOMAINS, imageDomains: ["muscache.com", "airbnb.com"] },
+  { sourceDomains: BOOKING_DOMAINS, imageDomains: ["bstatic.com", "booking.com"] },
+];
 
 // Treat private, local, multicast, and reserved ranges as unsafe fetch targets.
 const BLOCKED_IPV4_RANGES = [
@@ -166,6 +172,7 @@ export async function fetchMetadata(urlStr, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const safeUrl = options.isSafe || isSafeUrl;
   const useInjectedFetch = Boolean(options.fetchImpl);
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : FETCH_TIMEOUT_MS;
   let currentUrl = urlStr;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
@@ -177,7 +184,7 @@ export async function fetchMetadata(urlStr, options = {}) {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let response;
 
     try {
@@ -189,12 +196,13 @@ export async function fetchMetadata(urlStr, options = {}) {
           })
         : await fetchPinnedTarget(target, controller.signal);
     } catch {
-      return null;
-    } finally {
       clearTimeout(timeout);
+      return null;
     }
 
     if (isRedirect(response.status)) {
+      closeResponseBody(response.body);
+      clearTimeout(timeout);
       const location = response.headers.get("location");
       if (!location || redirectCount === MAX_REDIRECTS) return null;
       let nextUrl;
@@ -208,19 +216,38 @@ export async function fetchMetadata(urlStr, options = {}) {
       continue;
     }
 
-    if (response.status >= 400) return null;
+    if (response.status >= 400) {
+      closeResponseBody(response.body);
+      clearTimeout(timeout);
+      return null;
+    }
 
     const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) return null;
-    if (!response.body) return null;
+    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
+      closeResponseBody(response.body);
+      clearTimeout(timeout);
+      return null;
+    }
+    if (!response.body) {
+      clearTimeout(timeout);
+      return null;
+    }
 
-    const html = await readLimitedBody(response.body);
+    let html;
+    try {
+      html = await readLimitedBody(response.body, { signal: controller.signal });
+    } catch {
+      closeResponseBody(response.body);
+      clearTimeout(timeout);
+      return null;
+    }
+    clearTimeout(timeout);
     const meta = extractMetadata(html);
 
     let title = meta.ogTitle || meta.title || null;
     let description = meta.ogDescription || meta.description || null;
     let siteName = meta.siteName || null;
-    let ogImage = meta.ogImage || null;
+    let ogImage = trustedMetadataImageUrl(meta.ogImage, currentUrl);
     if (isLowQualityTitle(title)) title = null;
 
     // If OG extraction gave nothing useful, try JSON-LD structured data.
@@ -229,7 +256,7 @@ export async function fetchMetadata(urlStr, options = {}) {
       const structTitle = structuredTitle(structured);
       const structImg = structuredImage(structured);
       if (structTitle) title = structTitle;
-      if (structImg) ogImage = structImg;
+      if (structImg) ogImage = trustedMetadataImageUrl(structImg, currentUrl);
     }
 
     // If still no useful metadata, apply deterministic domain-aware fallback.
@@ -329,6 +356,17 @@ function isRedirect(status) {
   return status >= 300 && status < 400;
 }
 
+function closeResponseBody(body) {
+  if (!body) return;
+  if (typeof body.destroy === "function") {
+    body.destroy();
+    return;
+  }
+  if (typeof body.cancel === "function") {
+    body.cancel().catch(() => {});
+  }
+}
+
 function isLowQualityTitle(title) {
   return Boolean(
     title &&
@@ -338,9 +376,32 @@ function isLowQualityTitle(title) {
   );
 }
 
+function hostMatchesDomain(hostname, domains) {
+  const normalized = String(hostname || "").replace(/^www\./i, "").toLowerCase();
+  return domains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
+}
+
+function trustedMetadataImageUrl(raw, sourceUrl) {
+  if (!raw) return null;
+  let imageUrl;
+  let sourceHostname;
+  try {
+    imageUrl = new URL(String(raw).trim(), sourceUrl);
+    sourceHostname = new URL(sourceUrl).hostname;
+  } catch {
+    return null;
+  }
+  if (imageUrl.protocol !== "https:") return null;
+  if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(imageUrl.pathname)) return null;
+  const trusted = TRUSTED_IMAGE_SOURCES.some(
+    (entry) => hostMatchesDomain(sourceHostname, entry.sourceDomains) && hostMatchesDomain(imageUrl.hostname, entry.imageDomains)
+  );
+  return trusted ? imageUrl.toString() : null;
+}
+
 const KNOWN_DOMAIN_PROVIDERS = [
-  { pattern: /(^|\.)airbnb\.[a-z.]{2,}$/i, provider: "Airbnb", kind: "vacation rental listing" },
-  { pattern: /(^|\.)booking\.[a-z.]{2,}$/i, provider: "Booking.com", kind: "accommodation listing" },
+  { domains: AIRBNB_DOMAINS, provider: "Airbnb", kind: "vacation rental listing" },
+  { domains: BOOKING_DOMAINS, provider: "Booking.com", kind: "accommodation listing" },
   { pattern: /(^|\.)vrbo\.[a-z.]{2,}$/i, provider: "Vrbo", kind: "vacation rental listing" },
   { pattern: /(^|\.)expedia\.[a-z.]{2,}$/i, provider: "Expedia", kind: "travel listing" },
   { pattern: /(^|\.)hotels\.[a-z.]{2,}$/i, provider: "Hotels.com", kind: "accommodation listing" },
@@ -472,10 +533,11 @@ export function extractDomainFallback(urlStr) {
     return null;
   }
 
-  const hostname = url.hostname.replace(/^www\./, "");
+  const hostname = url.hostname.replace(/^www\./, "").toLowerCase();
 
   for (const provider of KNOWN_DOMAIN_PROVIDERS) {
-    if (provider.pattern.test(hostname)) {
+    const matches = provider.domains ? hostMatchesDomain(hostname, provider.domains) : provider.pattern.test(hostname);
+    if (matches) {
       const result = {
         provider: provider.provider,
         sourceKind: provider.kind,
@@ -489,7 +551,10 @@ export function extractDomainFallback(urlStr) {
         const roomsMatch = url.pathname.match(/^\/rooms\/(\d+)/);
         if (roomsMatch) {
           result.listingId = roomsMatch[1];
-          result.canonicalUrl = `https://${hostname}/rooms/${roomsMatch[1]}`;
+          const canonicalUrl = new URL(cleanTrackingUrl(url.toString()));
+          canonicalUrl.pathname = `/rooms/${roomsMatch[1]}`;
+          canonicalUrl.hash = "";
+          result.canonicalUrl = canonicalUrl.toString();
           result.facts.push("Price and availability must be checked on Airbnb");
         }
       }
@@ -499,6 +564,7 @@ export function extractDomainFallback(urlStr) {
         const hotelMatch = url.pathname.match(/\/hotel\/([a-z]+)\/([^/]+)/);
         if (hotelMatch) {
           result.listingId = hotelMatch[2];
+          result.canonicalUrl = cleanTrackingUrl(url.toString());
           result.facts.push("Price and availability must be checked on Booking.com");
         }
       }
@@ -513,24 +579,91 @@ export function extractDomainFallback(urlStr) {
   return null;
 }
 
-export async function readLimitedBody(body) {
+export async function readLimitedBody(body, options = {}) {
+  const signal = options.signal;
+  if (signal?.aborted) {
+    closeResponseBody(body);
+    throw new Error("aborted");
+  }
+  if (typeof body?.getReader === "function") return collectWebBody(body, signal);
+  return collectAsyncBody(body, signal);
+}
+
+async function collectWebBody(body, signal) {
+  const reader = body.getReader();
   const chunks = [];
   let total = 0;
-  for await (const chunk of body) {
-    const buffer = Buffer.from(chunk);
-    const remaining = MAX_HEAD_BYTES - total;
-    if (remaining <= 0) break;
-    const piece = buffer.subarray(0, remaining);
-    chunks.push(piece);
-    total += piece.byteLength;
-    const html = Buffer.concat(chunks).toString("utf8");
-    const headEnd = html.toLowerCase().lastIndexOf("</head>");
-    if (headEnd !== -1) return html.slice(0, headEnd + 7);
-    if (total >= MAX_HEAD_BYTES) break;
+  let abort;
+  const abortPromise = signal
+    ? new Promise((_, reject) => {
+        abort = () => {
+          reader.cancel().catch(() => {});
+          reject(new Error("aborted"));
+        };
+        signal.addEventListener("abort", abort, { once: true });
+      })
+    : null;
+
+  try {
+    while (total < MAX_HEAD_BYTES) {
+      if (signal?.aborted) throw new Error("aborted");
+      const read = reader.read();
+      const { done, value } = abortPromise ? await Promise.race([read, abortPromise]) : await read;
+      if (done) break;
+      const doneEarly = appendLimitedChunk(chunks, value, total);
+      total = doneEarly.total;
+      if (doneEarly.html) return doneEarly.html;
+    }
+  } finally {
+    if (signal && abort) signal.removeEventListener("abort", abort);
+    try {
+      reader.releaseLock();
+    } catch {
+      // Ignore release failures on already-canceled readers.
+    }
   }
 
-  const html = Buffer.concat(chunks).toString("utf8");
+  return htmlFromChunks(chunks);
+}
 
+async function collectAsyncBody(body, signal) {
+  const chunks = [];
+  let total = 0;
+  const abort = () => closeResponseBody(body);
+  signal?.addEventListener("abort", abort, { once: true });
+
+  try {
+    for await (const chunk of body) {
+      if (signal?.aborted) throw new Error("aborted");
+      const doneEarly = appendLimitedChunk(chunks, chunk, total);
+      total = doneEarly.total;
+      if (doneEarly.html) return doneEarly.html;
+      if (total >= MAX_HEAD_BYTES) break;
+    }
+  } finally {
+    signal?.removeEventListener("abort", abort);
+  }
+
+  return htmlFromChunks(chunks);
+}
+
+function appendLimitedChunk(chunks, chunk, total) {
+  const buffer = Buffer.from(chunk);
+  const remaining = MAX_HEAD_BYTES - total;
+  if (remaining <= 0) return { total };
+  const piece = buffer.subarray(0, remaining);
+  chunks.push(piece);
+  const nextTotal = total + piece.byteLength;
+  const html = Buffer.concat(chunks).toString("utf8");
+  const headEnd = html.toLowerCase().lastIndexOf("</head>");
+  return {
+    total: nextTotal,
+    html: headEnd !== -1 ? html.slice(0, headEnd + 7) : "",
+  };
+}
+
+function htmlFromChunks(chunks) {
+  const html = Buffer.concat(chunks).toString("utf8");
   // Trim to </head> boundary if found — most useful metadata lives in <head>.
   const headEnd = html.toLowerCase().lastIndexOf("</head>");
   if (headEnd !== -1) {

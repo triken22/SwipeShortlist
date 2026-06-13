@@ -15,6 +15,21 @@ test("Airbnb share URLs produce honest deterministic context", () => {
   assert.ok(context.facts.includes("Price and availability must be checked on Airbnb"));
 });
 
+test("Airbnb canonical URLs keep trip parameters and drop share tracking", () => {
+  const context = linkContextForUrl(
+    "https://www.airbnb.co.uk/rooms/1426755644990955296?check_in=2026-07-18&check_out=2026-08-01&adults=2&children=1&unique_share_id=abc&s=76"
+  );
+
+  const canonical = new URL(context.canonicalUrl);
+  assert.equal(canonical.pathname, "/rooms/1426755644990955296");
+  assert.equal(canonical.searchParams.get("check_in"), "2026-07-18");
+  assert.equal(canonical.searchParams.get("check_out"), "2026-08-01");
+  assert.equal(canonical.searchParams.get("adults"), "2");
+  assert.equal(canonical.searchParams.get("children"), "1");
+  assert.equal(canonical.searchParams.has("unique_share_id"), false);
+  assert.equal(canonical.searchParams.has("s"), false);
+});
+
 test("Booking hotel URLs produce honest deterministic context", () => {
   const context = linkContextForUrl("https://www.booking.com/hotel/es/family-suite.html?utm_source=chat");
 
@@ -25,6 +40,24 @@ test("Booking hotel URLs produce honest deterministic context", () => {
   assert.ok(context.facts.includes("Booking.com listing"));
 });
 
+test("Booking canonical URLs keep trip parameters and drop tracking", () => {
+  const context = linkContextForUrl(
+    "https://www.booking.com/hotel/es/family-suite.html?check_in=2026-07-18&check_out=2026-08-01&group_adults=2&group_children=1&utm_source=chat"
+  );
+
+  const canonical = new URL(context.canonicalUrl);
+  assert.equal(canonical.pathname, "/hotel/es/family-suite.html");
+  assert.equal(canonical.searchParams.get("check_in"), "2026-07-18");
+  assert.equal(canonical.searchParams.get("check_out"), "2026-08-01");
+  assert.equal(canonical.searchParams.get("group_adults"), "2");
+  assert.equal(canonical.searchParams.get("group_children"), "1");
+  assert.equal(canonical.searchParams.has("utm_source"), false);
+});
+
 test("unknown domains do not receive provider-specific context", () => {
   assert.equal(linkContextForUrl("https://example.org/family-suite"), null);
+});
+
+test("spoofed provider hosts do not receive Airbnb context", () => {
+  assert.equal(linkContextForUrl("https://airbnb.evil.com/rooms/1426755644990955296"), null);
 });

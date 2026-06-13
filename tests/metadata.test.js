@@ -266,6 +266,28 @@ test("fetchMetadata ignores low-quality error titles", async () => {
   assert.equal(result, null);
 });
 
+test("fetchMetadata aborts stalled response body reads", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("<html><head><title>Slow"));
+    },
+  });
+  const startedAt = Date.now();
+
+  const result = await fetchMetadata("https://public.example/slow", {
+    isSafe: async () => true,
+    timeoutMs: 20,
+    fetchImpl: async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+
+  assert.equal(result, null);
+  assert.ok(Date.now() - startedAt < 1000, "stalled body read returns after the metadata deadline");
+});
+
 // --- Link Intelligence: improved body reading ---
 
 test("readLimitedBody reads past 64KB to find </head> boundary", async () => {
@@ -318,18 +340,33 @@ test("extractDomainFallback recognizes Airbnb rooms URL and returns listing ID",
   assert.equal(result.provider, "Airbnb");
   assert.equal(result.sourceKind, "vacation rental listing");
   assert.equal(result.listingId, "1426755644990955296");
-  assert.equal(result.canonicalUrl, "https://airbnb.co.uk/rooms/1426755644990955296");
+  assert.equal(result.canonicalUrl, "https://www.airbnb.co.uk/rooms/1426755644990955296");
   assert.ok(result.facts.includes("Price and availability must be checked on Airbnb"));
 });
 
+test("extractDomainFallback preserves Airbnb trip parameters", () => {
+  const result = extractDomainFallback(
+    "https://www.airbnb.co.uk/rooms/1426755644990955296?check_in=2026-07-18&check_out=2026-08-01&adults=2&children=1&unique_share_id=xxx&s=76"
+  );
+
+  const canonical = new URL(result.canonicalUrl);
+  assert.equal(canonical.searchParams.get("check_in"), "2026-07-18");
+  assert.equal(canonical.searchParams.get("check_out"), "2026-08-01");
+  assert.equal(canonical.searchParams.get("adults"), "2");
+  assert.equal(canonical.searchParams.get("children"), "1");
+  assert.equal(canonical.searchParams.has("unique_share_id"), false);
+  assert.equal(canonical.searchParams.has("s"), false);
+});
+
 test("extractDomainFallback recognizes Booking.com hotel URL", () => {
-  const result = extractDomainFallback("https://www.booking.com/hotel/es/some-example.html");
+  const result = extractDomainFallback("https://www.booking.com/hotel/es/some-example.html?check_in=2026-07-18&check_out=2026-08-01&group_adults=2&utm_source=chat");
 
   assert.notEqual(result, null);
   assert.equal(result.provider, "Booking.com");
   assert.equal(result.sourceKind, "accommodation listing");
   // Note: listingId preserves file extension from Booking.com hotel slug
   assert.equal(result.listingId, "some-example.html");
+  assert.equal(result.canonicalUrl, "https://www.booking.com/hotel/es/some-example.html?check_in=2026-07-18&check_out=2026-08-01&group_adults=2");
   assert.ok(result.facts.includes("Price and availability must be checked on Booking.com"));
 });
 
@@ -437,4 +474,56 @@ test("fetchMetadata returns null for unrecognized domain with no OG tags", async
 
   // Unknown domain with no OG metadata returns null
   assert.equal(result, null);
+});
+
+test("fetchMetadata does not apply Airbnb fallback to spoofed hosts", async () => {
+  const result = await fetchMetadata("https://airbnb.evil.com/rooms/1426755644990955296", {
+    isSafe: async () => true,
+    fetchImpl: async () =>
+      new Response("<html><head></head><body>nothing</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+
+  assert.equal(result, null);
+});
+
+test("fetchMetadata filters untrusted third-party og:image URLs", async () => {
+  const html = `
+    <html><head>
+      <meta property="og:title" content="Trusted title">
+      <meta property="og:image" content="https://tracker.example.net/pixel.jpg">
+    </head></html>
+  `;
+  const result = await fetchMetadata("https://example.org/page", {
+    isSafe: async () => true,
+    fetchImpl: async () =>
+      new Response(html, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+
+  assert.equal(result.title, "Trusted title");
+  assert.equal(result.ogImage, null);
+});
+
+test("fetchMetadata keeps trusted Airbnb image CDN URLs", async () => {
+  const html = `
+    <html><head>
+      <meta property="og:title" content="Airbnb stay">
+      <meta property="og:image" content="https://a0.muscache.com/im/pictures/example.jpeg">
+    </head></html>
+  `;
+  const result = await fetchMetadata("https://www.airbnb.co.uk/rooms/1426755644990955296", {
+    isSafe: async () => true,
+    fetchImpl: async () =>
+      new Response(html, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+
+  assert.equal(result.ogImage, "https://a0.muscache.com/im/pictures/example.jpeg");
 });

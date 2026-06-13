@@ -1,5 +1,18 @@
-const AIRBNB_HOST_RE = /(^|\.)airbnb\.[a-z.]+$/i;
-const BOOKING_HOST_RE = /(^|\.)booking\.com$/i;
+const AIRBNB_DOMAINS = [
+  "airbnb.com",
+  "airbnb.co.uk",
+  "airbnb.de",
+  "airbnb.fr",
+  "airbnb.es",
+  "airbnb.it",
+  "airbnb.ca",
+  "airbnb.com.au",
+  "airbnb.at",
+  "airbnb.ch",
+  "airbnb.nl",
+  "airbnb.pt",
+];
+const BOOKING_DOMAINS = ["booking.com"];
 
 const TRACKING_PARAMS = new Set([
   "unique_share_id",
@@ -7,15 +20,6 @@ const TRACKING_PARAMS = new Set([
   "s",
   "source_impression_id",
   "share_id",
-  "check_in",
-  "check_out",
-  "adults",
-  "children",
-  "infants",
-  "pets",
-  "guests",
-  "locale",
-  "currency",
 ]);
 
 export function linkContextForUrl(urlStr) {
@@ -27,15 +31,21 @@ export function linkContextForUrl(urlStr) {
   }
 
   const hostname = url.hostname.replace(/^www\./i, "").toLowerCase();
-  if (AIRBNB_HOST_RE.test(hostname)) return airbnbContext(url);
-  if (BOOKING_HOST_RE.test(hostname)) return bookingContext(url);
+  if (hostMatchesDomain(hostname, AIRBNB_DOMAINS)) return airbnbContext(url);
+  if (hostMatchesDomain(hostname, BOOKING_DOMAINS)) return bookingContext(url);
   return null;
+}
+
+function hostMatchesDomain(hostname, domains) {
+  return domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 function airbnbContext(url) {
   const roomMatch = url.pathname.match(/\/rooms\/(\d+)/i);
   const listingId = roomMatch?.[1] || "";
-  const canonicalUrl = listingId ? `${url.origin}/rooms/${listingId}` : cleanUrl(url).toString();
+  const cleanedUrl = cleanUrl(url);
+  if (listingId) cleanedUrl.pathname = `/rooms/${listingId}`;
+  const canonicalUrl = cleanedUrl.toString();
   const facts = ["Airbnb listing", "Price and availability must be checked on Airbnb"];
   if (listingId) facts.splice(1, 0, `Listing ID ${listingId}`);
 
