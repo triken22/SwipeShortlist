@@ -31,7 +31,7 @@ function cleanImageUrl(raw, sourceUrl = "") {
     const url = new URL(raw.trim());
     if (url.protocol !== "https:") return null;
     if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(url.pathname)) return null;
-    if (!sourceUrl || isTrustedImageForSource(url.hostname, sourceUrl)) return url.toString();
+    if (isTrustedImageForSource(url.hostname, sourceUrl)) return url.toString();
     return null;
   } catch {
     return null;
@@ -767,10 +767,6 @@ function ensureVoter(shortlistId, voter) {
   const voterKey = cleanVoterKey(voter.voterKey || "");
   const existing = findVoter(shortlistId, voter);
   if (existing) {
-    if (voterKey && String(existing.voter_key || "").startsWith("legacy-")) {
-      db.prepare("UPDATE voters SET voter_key = ? WHERE id = ?").run(voterKey, existing.id);
-      return db.prepare("SELECT * FROM voters WHERE id = ?").get(existing.id);
-    }
     return existing;
   }
 
@@ -799,18 +795,6 @@ function findVoter(shortlistId, voter) {
         )
         .get(shortlistId, cleanVoterName(rawName));
       if (byNameWithToken) return byNameWithToken;
-
-      // Legacy fallback for old voters
-      const legacyByName = db
-        .prepare(
-          `SELECT *
-           FROM voters
-           WHERE shortlist_id = ?
-             AND lower(name) = lower(?)
-             AND voter_key LIKE 'legacy-%'`
-        )
-        .get(shortlistId, cleanVoterName(rawName));
-      if (legacyByName) return legacyByName;
     }
     return null;
   }

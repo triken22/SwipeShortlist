@@ -1918,7 +1918,7 @@ function cleanImageUrl(raw, sourceUrl = "") {
     if (url.protocol !== "https:") return null;
     // Reject obviously tiny/placeholder images
     if (/placeholder|spacer|pixel|1x1|blank|icon-16/i.test(url.pathname)) return null;
-    if (!sourceUrl || String(sourceUrl).startsWith("manual-") || isTrustedImageForSource(url.hostname, sourceUrl)) return url.toString();
+    if (isTrustedImageForSource(url.hostname, sourceUrl)) return url.toString();
     return null;
   } catch {
     return null;
