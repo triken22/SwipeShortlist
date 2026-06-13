@@ -254,6 +254,10 @@ test("structured draft cards only persist trusted provider images", async () => 
           imagePath: "https://a0.muscache.com/im/pictures/example.jpeg"
         },
         {
+          sourceUrl: "https://www.airbnb.nl/rooms/1426755644990955296",
+          imagePath: "https://a0.muscache.com/im/pictures/nl.jpeg"
+        },
+        {
           sourceUrl: "https://example.org/same-host",
           imagePath: "https://example.org/same-host.jpg"
         },
@@ -270,9 +274,10 @@ test("structured draft cards only persist trusted provider images", async () => 
     });
 
     assert.equal(shortlist.cards[0].imagePath, "https://a0.muscache.com/im/pictures/example.jpeg");
-    assert.equal(shortlist.cards[1].imagePath, "/assets/link-card.svg");
+    assert.equal(shortlist.cards[1].imagePath, "https://a0.muscache.com/im/pictures/nl.jpeg");
     assert.equal(shortlist.cards[2].imagePath, "/assets/link-card.svg");
     assert.equal(shortlist.cards[3].imagePath, "/assets/link-card.svg");
+    assert.equal(shortlist.cards[4].imagePath, "/assets/link-card.svg");
   } finally {
     dbModule.db.close();
     rmSync(temp, { recursive: true, force: true });

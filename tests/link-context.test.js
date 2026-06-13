@@ -30,6 +30,14 @@ test("Airbnb canonical URLs keep trip parameters and drop share tracking", () =>
   assert.equal(canonical.searchParams.has("s"), false);
 });
 
+test("Airbnb country domains produce the same deterministic context", () => {
+  const context = linkContextForUrl("https://www.airbnb.nl/rooms/1426755644990955296?s=76");
+
+  assert.equal(context.providerName, "Airbnb");
+  assert.equal(context.canonicalUrl, "https://www.airbnb.nl/rooms/1426755644990955296");
+  assert.ok(context.facts.includes("Listing ID 1426755644990955296"));
+});
+
 test("Booking hotel URLs produce honest deterministic context", () => {
   const context = linkContextForUrl("https://www.booking.com/hotel/es/family-suite.html?utm_source=chat");
 

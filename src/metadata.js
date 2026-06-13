@@ -6,7 +6,20 @@ import { isIP } from "node:net";
 const FETCH_TIMEOUT_MS = 4000;
 const MAX_HEAD_BYTES = 256 * 1024;
 const MAX_REDIRECTS = 3;
-const AIRBNB_DOMAINS = ["airbnb.com", "airbnb.co.uk", "airbnb.de", "airbnb.fr", "airbnb.es", "airbnb.it", "airbnb.ca", "airbnb.com.au"];
+const AIRBNB_DOMAINS = [
+  "airbnb.com",
+  "airbnb.co.uk",
+  "airbnb.de",
+  "airbnb.fr",
+  "airbnb.es",
+  "airbnb.it",
+  "airbnb.ca",
+  "airbnb.com.au",
+  "airbnb.at",
+  "airbnb.ch",
+  "airbnb.nl",
+  "airbnb.pt",
+];
 const BOOKING_DOMAINS = ["booking.com"];
 const TRUSTED_IMAGE_SOURCES = [
   { sourceDomains: AIRBNB_DOMAINS, imageDomains: ["muscache.com", "airbnb.com"] },

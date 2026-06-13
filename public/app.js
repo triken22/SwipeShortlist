@@ -27,7 +27,20 @@ const state = {
 const DEFAULT_TITLE = "Private shortlist";
 const DEFAULT_CARD_IMAGE = "/assets/link-card.svg";
 const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thumb.png", "/assets/mare-thumb.png"]);
-const AIRBNB_DOMAINS = ["airbnb.com", "airbnb.co.uk", "airbnb.de", "airbnb.fr", "airbnb.es", "airbnb.it", "airbnb.ca", "airbnb.com.au"];
+const AIRBNB_DOMAINS = [
+  "airbnb.com",
+  "airbnb.co.uk",
+  "airbnb.de",
+  "airbnb.fr",
+  "airbnb.es",
+  "airbnb.it",
+  "airbnb.ca",
+  "airbnb.com.au",
+  "airbnb.at",
+  "airbnb.ch",
+  "airbnb.nl",
+  "airbnb.pt",
+];
 const BOOKING_DOMAINS = ["booking.com"];
 const TRUSTED_IMAGE_SOURCES = [
   { sourceDomains: AIRBNB_DOMAINS, imageDomains: ["muscache.com", "airbnb.com"] },

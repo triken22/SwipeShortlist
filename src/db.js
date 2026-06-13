@@ -18,7 +18,20 @@ const RETIRED_IMAGE_PATHS = new Set(["/assets/mare-blu.png", "/assets/beach-thum
 const DEFAULT_TITLE = "Private shortlist";
 const DEFAULT_DEADLINE_LABEL = "Aim to decide today";
 const MAX_LINKS = 50;
-const AIRBNB_DOMAINS = ["airbnb.com", "airbnb.co.uk", "airbnb.de", "airbnb.fr", "airbnb.es", "airbnb.it", "airbnb.ca", "airbnb.com.au"];
+const AIRBNB_DOMAINS = [
+  "airbnb.com",
+  "airbnb.co.uk",
+  "airbnb.de",
+  "airbnb.fr",
+  "airbnb.es",
+  "airbnb.it",
+  "airbnb.ca",
+  "airbnb.com.au",
+  "airbnb.at",
+  "airbnb.ch",
+  "airbnb.nl",
+  "airbnb.pt",
+];
 const BOOKING_DOMAINS = ["booking.com"];
 const TRUSTED_IMAGE_SOURCES = [
   { sourceDomains: AIRBNB_DOMAINS, imageDomains: ["muscache.com", "airbnb.com"] },

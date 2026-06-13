@@ -344,6 +344,15 @@ test("extractDomainFallback recognizes Airbnb rooms URL and returns listing ID",
   assert.ok(result.facts.includes("Price and availability must be checked on Airbnb"));
 });
 
+test("extractDomainFallback recognizes Airbnb country domains", () => {
+  const result = extractDomainFallback("https://www.airbnb.nl/rooms/1426755644990955296?s=76");
+
+  assert.notEqual(result, null);
+  assert.equal(result.provider, "Airbnb");
+  assert.equal(result.listingId, "1426755644990955296");
+  assert.equal(result.canonicalUrl, "https://www.airbnb.nl/rooms/1426755644990955296");
+});
+
 test("extractDomainFallback preserves Airbnb trip parameters", () => {
   const result = extractDomainFallback(
     "https://www.airbnb.co.uk/rooms/1426755644990955296?check_in=2026-07-18&check_out=2026-08-01&adults=2&children=1&unique_share_id=xxx&s=76"
@@ -526,4 +535,23 @@ test("fetchMetadata keeps trusted Airbnb image CDN URLs", async () => {
   });
 
   assert.equal(result.ogImage, "https://a0.muscache.com/im/pictures/example.jpeg");
+});
+
+test("fetchMetadata keeps trusted Airbnb image CDN URLs for Airbnb country domains", async () => {
+  const html = `
+    <html><head>
+      <meta property="og:title" content="Airbnb stay">
+      <meta property="og:image" content="https://a0.muscache.com/im/pictures/nl.jpeg">
+    </head></html>
+  `;
+  const result = await fetchMetadata("https://www.airbnb.nl/rooms/1426755644990955296", {
+    isSafe: async () => true,
+    fetchImpl: async () =>
+      new Response(html, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+
+  assert.equal(result.ogImage, "https://a0.muscache.com/im/pictures/nl.jpeg");
 });
